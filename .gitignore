@@ -1,0 +1,30 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts.timestamp
+
+# Environment / secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Local database + uploaded objects (private object storage stand-in)
+prisma/*.db
+prisma/*.db-journal
+prisma/migrations/dev.db*
+/var/
+/storage/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Test output
+coverage/
+.vitest/

@@ -1,0 +1,1456 @@
+// KAIJU — domain model
+// -------------------------------------------------------------------------
+// Conventions that hold across the whole schema:
+//  * Money is ALWAYS an Int of minor units (cents) + a currency code. Never Float.
+//  * Enum-like columns are String + a TypeScript union in src/server/domain/enums.ts,
+//    validated by Zod at every boundary. This keeps the schema portable between
+//    SQLite (local dev) and PostgreSQL (production) without a rewrite.
+//  * Every row a producer or customer can address by id carries an explicit owner
+//    column so backend queries can enforce ownership (IDOR/BOLA defence).
+//  * Financial and moderation records are append-only; corrections are new rows.
+// -------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ========================= IDENTITY =========================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  // scrypt hash, encoded as scrypt$N$r$p$salt$hash — never a plaintext or fast hash.
+  passwordHash  String
+  displayName   String
+  // Comma-separated role list. Parsed + validated server-side; the client never sends roles.
+  roles         String    @default("CUSTOMER")
+  status        String    @default("ACTIVE") // ACTIVE | SUSPENDED | DELETION_REQUESTED | DELETED
+  locale        String    @default("pt-BR")
+  currency      String    @default("BRL")
+
+  // MFA (TOTP) — required for privileged roles before any privileged action.
+  mfaSecret        String?
+  mfaEnrolledAt    DateTime?
+  mfaRecoveryCodes String? // JSON array of scrypt-hashed single-use recovery codes
+
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  sessions           Session[]
+  addresses          Address[]
+  measurements       MeasurementProfile[]
+  references         ReferenceImage[]
+  designs            Design[]
+  carts              Cart[]
+  orders             Order[]
+  producer           Producer?
+  creatorStore       CreatorStore?
+  sellerAccount      SellerAccount?
+  subscriptions      Subscription[]
+  reviews            Review[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]           @relation("AuditActor")
+  interactions       InteractionEvent[]
+  rewardGrants       RewardGrant[]
+  copyrightReports   CopyrightReport[]
+  jobPostings        JobPosting[]
+  jobApplications    JobApplication[]
+  messages           Message[]
+  disputes           Dispute[]
+  consents           ConsentRecord[]
+  verificationTokens VerificationToken[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Session {
+  id            String    @id @default(cuid())
+  // Only the hash of the session token is stored; the raw token lives in the cookie.
+  tokenHash     String    @unique
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Bound to the request context to make stolen-cookie replay noisier.
+  userAgentHash String?
+  ipHash        String?
+  // Elevated sessions have passed MFA within the step-up window.
+  mfaVerifiedAt DateTime?
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  revokedReason String?
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+model VerificationToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose    String // EMAIL_VERIFY | PASSWORD_RESET | EMAIL_CHANGE
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, purpose])
+}
+
+model ConsentRecord {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind          String // ESSENTIAL | ANALYTICS | MARKETING | AI_IMPROVEMENT
+  granted       Boolean
+  policyVersion String
+  createdAt     DateTime @default(now())
+
+  @@index([userId, kind])
+}
+
+model Address {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label       String    @default("Casa")
+  recipient   String
+  line1       String
+  line2       String?
+  district    String?
+  city        String
+  state       String
+  postalCode  String
+  countryCode String    @default("BR")
+  phone       String?
+  isDefault   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  shipments Shipment[]
+  orders    Order[]
+
+  @@index([userId, deletedAt])
+}
+
+// ========================= MEASUREMENTS =========================
+
+model MeasurementProfile {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String    @default("Meu corpo")
+  unit       String    @default("CM") // CM | IN
+  // Millimetres, integer. Avoids float drift and keeps tolerance maths exact.
+  heightMm   Int?
+  chestMm    Int?
+  waistMm    Int?
+  hipMm      Int?
+  shoulderMm Int?
+  sleeveMm   Int?
+  inseamMm   Int?
+  outseamMm  Int?
+  neckMm     Int?
+  thighMm    Int?
+  wristMm    Int?
+  torsoMm    Int?
+  notes      String?
+  // How the numbers were obtained changes the tolerance the atelier works to.
+  source     String    @default("SELF_REPORTED") // SELF_REPORTED | TAILOR_MEASURED | FROM_GARMENT
+  isDefault  Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  designs    Design[]
+  orderItems OrderItem[]
+
+  @@index([userId, deletedAt])
+}
+
+// ========================= UPLOADS / REFERENCES =========================
+
+model StoredFile {
+  id           String    @id @default(cuid())
+  // Opaque storage key. Never derived from the user-supplied filename.
+  storageKey   String    @unique
+  bucket       String    @default("private")
+  // Verified by magic bytes, not by the client-declared type or the extension.
+  contentType  String
+  byteSize     Int
+  sha256       String
+  widthPx      Int?
+  heightPx     Int?
+  originalName String? // sanitised, display-only
+  scanStatus   String    @default("PENDING") // PENDING | CLEAN | SUSPECT | REJECTED
+  scanNotes    String?
+  ownerUserId  String?
+  purpose      String // REFERENCE | PRODUCT | PROGRESS_PHOTO | QC_PHOTO | VERIFICATION_DOC | AVATAR
+  // Retention is enforced by a job, not by hope.
+  retainUntil  DateTime?
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  referenceImage   ReferenceImage?
+  productionAssets ProductionAsset[]
+  verificationDocs VerificationDocument[]
+
+  @@index([ownerUserId, purpose])
+  @@index([scanStatus])
+  @@index([retainUntil])
+}
+
+model ReferenceImage {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fileId    String     @unique
+  file      StoredFile @relation(fields: [fileId], references: [id])
+  // What this reference is FOR — the multi-reference system's core idea.
+  role      String     @default("OVERALL") // OVERALL | SILHOUETTE | SLEEVES | COLOR | DETAILS | FABRIC | PRINT | FIT
+  caption   String?
+  // Copyright triage result for this specific upload.
+  ipFlag    String     @default("UNREVIEWED") // UNREVIEWED | LIKELY_ORIGINAL | POSSIBLE_THIRD_PARTY | RESTRICTED
+  ipNotes   String?
+  createdAt DateTime   @default(now())
+  deletedAt DateTime?
+
+  designReferences DesignReference[]
+
+  @@index([userId, deletedAt])
+}
+
+// ========================= DESIGN / AI =========================
+
+model Design {
+  id                   String              @id @default(cuid())
+  userId               String
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title                String              @default("Peça sem título")
+  briefText            String? // the customer's own words — untrusted input, never a prompt
+  garmentType          String? // denormalised from the current version for listing/search
+  status               String              @default("DRAFT") // DRAFT | ANALYZING | NEEDS_REVIEW | APPROVED | ORDERED | ARCHIVED
+  measurementProfileId String?
+  measurementProfile   MeasurementProfile? @relation(fields: [measurementProfileId], references: [id])
+  currentVersionId     String?             @unique
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  deletedAt            DateTime?
+
+  versions   DesignVersion[]
+  references DesignReference[]
+  analyses   AIAnalysis[]
+  quotations Quotation[]
+  orderItems OrderItem[]
+
+  @@index([userId, status])
+}
+
+model DesignReference {
+  id               String         @id @default(cuid())
+  designId         String
+  design           Design         @relation(fields: [designId], references: [id], onDelete: Cascade)
+  referenceImageId String
+  referenceImage   ReferenceImage @relation(fields: [referenceImageId], references: [id], onDelete: Cascade)
+  role             String // SILHOUETTE | SLEEVES | COLOR | DETAILS | FABRIC | PRINT | FIT | OVERALL
+  weight           Int            @default(100) // 0..100, how strongly this reference drives the spec
+  position         Int            @default(0)
+
+  @@unique([designId, referenceImageId, role])
+  @@index([designId])
+}
+
+// Every specification change is a new immutable version. Approved versions are frozen.
+model DesignVersion {
+  id               String    @id @default(cuid())
+  designId         String
+  design           Design    @relation(fields: [designId], references: [id], onDelete: Cascade)
+  version          Int
+  // The structured spec: JSON validated against DesignSpecificationSchema (Zod) on write.
+  specJson         String
+  // Who authored this revision and why — the revision history the atelier reads.
+  authoredBy       String // AI | CUSTOMER | PRODUCER | ADMIN
+  authorUserId     String?
+  changeSummary    String?
+  approvedAt       DateTime?
+  approvedByUserId String?
+  // Hash of specJson at approval time; production compares against this.
+  specHash         String?
+  createdAt        DateTime  @default(now())
+
+  analyses       AIAnalysis[]
+  quotations     Quotation[]
+  orderItems     OrderItem[]
+  productionJobs ProductionJob[]
+
+  @@unique([designId, version])
+  @@index([designId, createdAt])
+}
+
+model AIAnalysis {
+  id              String         @id @default(cuid())
+  designId        String
+  design          Design         @relation(fields: [designId], references: [id], onDelete: Cascade)
+  designVersionId String?
+  designVersion   DesignVersion? @relation(fields: [designVersionId], references: [id])
+  provider        String // heuristic | anthropic | ...
+  model           String?
+  status          String         @default("QUEUED") // QUEUED | RUNNING | SUCCEEDED | FAILED | BLOCKED
+  // The four-bucket epistemics: observed / inferred / uncertain / recommended.
+  resultJson      String?
+  failureCode     String?
+  failureMessage  String?
+  // Guardrail outcomes: injection attempts, IP risk, disallowed content.
+  guardrailJson   String?
+  latencyMs       Int?
+  // Cost + token accounting for the AI budget, in minor units.
+  costCents       Int            @default(0)
+  correlationId   String?
+  createdAt       DateTime       @default(now())
+  completedAt     DateTime?
+
+  @@index([designId, createdAt])
+  @@index([status])
+}
+
+// ========================= CATALOG =========================
+
+model Collection {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  tagline     String?
+  description String?
+  heroTone    String   @default("ink") // design-system token, not free CSS
+  // Rights posture for everything inside: original work, or licensed with paperwork.
+  rightsBasis String   @default("ORIGINAL") // ORIGINAL | LICENSED | CREATOR_OWNED
+  licensor    String?
+  published   Boolean  @default(false)
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products ProductCollection[]
+}
+
+model Product {
+  id                String        @id @default(cuid())
+  slug              String        @unique
+  name              String
+  subtitle          String?
+  description       String
+  // Made-to-order vs stocked changes the whole downstream flow.
+  fulfilment        String        @default("MADE_TO_ORDER") // MADE_TO_ORDER | STOCKED | COLLECTIBLE
+  garmentType       String
+  category          String // TOPS | OUTERWEAR | BOTTOMS | DRESSES | KNITWEAR | ACCESSORIES | COLLECTIBLE
+  // Presentation cut, not an identity claim. UNISEX is the default.
+  cutProfile        String        @default("UNISEX") // UNISEX | MASC_CUT | FEM_CUT
+  basePriceCents    Int
+  currency          String        @default("BRL")
+  // Rights metadata is a first-class product field, never an afterthought.
+  rightsBasis       String        @default("ORIGINAL") // ORIGINAL | LICENSED | CREATOR_OWNED
+  licensor          String?
+  licenseRef        String?
+  customizable      Boolean       @default(true)
+  productionDaysMin Int           @default(10)
+  productionDaysMax Int           @default(21)
+  complexity        Int           @default(3) // 1..5, drives producer matching + price
+  published         Boolean       @default(false)
+  // Owning creator store, when this is a creator's product rather than house stock.
+  creatorStoreId    String?
+  creatorStore      CreatorStore? @relation(fields: [creatorStoreId], references: [id])
+  // Denormalised counters — recomputed by jobs, never trusted from the client.
+  ratingSum         Int           @default(0)
+  ratingCount       Int           @default(0)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  deletedAt         DateTime?
+
+  variants     ProductVariant[]
+  media        ProductMedia[]
+  collections  ProductCollection[]
+  orderItems   OrderItem[]
+  reviews      Review[]
+  tags         ProductTag[]
+  interactions InteractionEvent[]
+
+  @@index([published, category])
+  @@index([creatorStoreId])
+}
+
+model ProductTag {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  // Taxonomy facets the recommender scores on.
+  kind      String // STYLE | MOTIF | PALETTE | FIT | FABRIC | FANDOM_GENRE
+  value     String
+
+  @@unique([productId, kind, value])
+  @@index([kind, value])
+}
+
+model ProductVariant {
+  id              String  @id @default(cuid())
+  productId       String
+  product         Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku             String  @unique
+  size            String
+  colorway        String
+  priceDeltaCents Int     @default(0)
+  // Only meaningful for STOCKED/COLLECTIBLE. Made-to-order has no stock.
+  stockOnHand     Int     @default(0)
+  stockReserved   Int     @default(0)
+  active          Boolean @default(true)
+
+  orderItems OrderItem[]
+  cartItems  CartItem[]
+
+  @@index([productId, active])
+}
+
+model ProductMedia {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  alt       String
+  // The honesty axis: a render is never presented as a photograph.
+  kind      String  @default("STUDIO_PHOTO") // STUDIO_PHOTO | FLAT_LAY | DETAIL_MACRO | TECHNICAL_DRAWING | AI_CONCEPT | CUSTOMER_PHOTO
+  view      String  @default("FRONT") // FRONT | BACK | SIDE | DETAIL | FABRIC
+  position  Int     @default(0)
+
+  @@index([productId, position])
+}
+
+model ProductCollection {
+  productId    String
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  position     Int        @default(0)
+
+  @@id([productId, collectionId])
+}
+
+// ========================= CART / ORDERS =========================
+
+model Cart {
+  id          String    @id @default(cuid())
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Anonymous carts are keyed by a signed, httpOnly cookie value's hash.
+  anonKeyHash String?   @unique
+  currency    String    @default("BRL")
+  couponCode  String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  closedAt    DateTime?
+
+  items CartItem[]
+
+  @@index([userId, closedAt])
+}
+
+model CartItem {
+  id                    String          @id @default(cuid())
+  cartId                String
+  cart                  Cart            @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  kind                  String // CATALOG | CUSTOM
+  productVariantId      String?
+  productVariant        ProductVariant? @relation(fields: [productVariantId], references: [id])
+  designId              String?
+  quotationId           String?
+  quantity              Int             @default(1)
+  // Snapshot only — the server recomputes every price at checkout and ignores this.
+  displayUnitPriceCents Int
+  createdAt             DateTime        @default(now())
+
+  @@index([cartId])
+}
+
+model Quotation {
+  id                String        @id @default(cuid())
+  designId          String
+  design            Design        @relation(fields: [designId], references: [id], onDelete: Cascade)
+  designVersionId   String
+  designVersion     DesignVersion @relation(fields: [designVersionId], references: [id])
+  currency          String        @default("BRL")
+  // Full, auditable breakdown. Every line is an integer of minor units.
+  breakdownJson     String
+  subtotalCents     Int
+  aiFeeCents        Int           @default(0)
+  serviceFeeCents   Int           @default(0)
+  totalCents        Int
+  productionDaysMin Int
+  productionDaysMax Int
+  // Quotes expire; stale prices are never honoured.
+  expiresAt         DateTime
+  // Bound to the exact spec hash it was computed from.
+  specHash          String
+  createdAt         DateTime      @default(now())
+
+  orderItems OrderItem[]
+
+  @@index([designId, createdAt])
+}
+
+model Order {
+  id        String @id @default(cuid())
+  // Human-facing reference, unguessable enough to not be enumerable.
+  reference String @unique
+  userId    String
+  user      User   @relation(fields: [userId], references: [id])
+  status    String @default("DRAFT")
+  currency  String @default("BRL")
+
+  subtotalCents          Int @default(0)
+  discountCents          Int @default(0)
+  shippingCents          Int @default(0)
+  taxCents               Int @default(0)
+  totalCents             Int @default(0)
+  // Marketplace split, computed server-side at capture time.
+  platformFeeCents       Int @default(0)
+  producerPayoutCents    Int @default(0)
+  creatorCommissionCents Int @default(0)
+
+  couponId          String?
+  coupon            Coupon?  @relation(fields: [couponId], references: [id])
+  shippingAddressId String?
+  shippingAddress   Address? @relation(fields: [shippingAddressId], references: [id])
+
+  placedAt     DateTime?
+  cancelledAt  DateTime?
+  cancelReason String?
+  holdReason   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  items        OrderItem[]
+  payments     Payment[]
+  refunds      Refund[]
+  shipments    Shipment[]
+  events       OrderEvent[]
+  jobs         ProductionJob[]
+  disputes     Dispute[]
+  rewardGrants RewardGrant[]
+  messages     MessageThread[]
+  reviews      Review[]
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+}
+
+// Append-only state-machine log. The order's status column is a projection of this.
+model OrderEvent {
+  id            String   @id @default(cuid())
+  orderId       String
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus    String?
+  toStatus      String
+  actorType     String // SYSTEM | CUSTOMER | PRODUCER | ADMIN | PROVIDER_WEBHOOK
+  actorUserId   String?
+  reason        String?
+  metaJson      String?
+  correlationId String?
+  createdAt     DateTime @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model OrderItem {
+  id       String @id @default(cuid())
+  orderId  String
+  order    Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  kind     String // CATALOG | CUSTOM | REWARD
+  quantity Int    @default(1)
+
+  productId        String?
+  product          Product?        @relation(fields: [productId], references: [id])
+  productVariantId String?
+  productVariant   ProductVariant? @relation(fields: [productVariantId], references: [id])
+
+  designId             String?
+  design               Design?             @relation(fields: [designId], references: [id])
+  designVersionId      String?
+  designVersion        DesignVersion?      @relation(fields: [designVersionId], references: [id])
+  quotationId          String?
+  quotation            Quotation?          @relation(fields: [quotationId], references: [id])
+  measurementProfileId String?
+  measurementProfile   MeasurementProfile? @relation(fields: [measurementProfileId], references: [id])
+
+  // Immutable snapshot of what was actually bought and at what price.
+  titleSnapshot    String
+  specSnapshotJson String?
+  unitPriceCents   Int
+  totalPriceCents  Int
+  creatorStoreId   String?
+  creatorStore     CreatorStore? @relation(fields: [creatorStoreId], references: [id])
+
+  jobs ProductionJob[]
+
+  @@index([orderId])
+}
+
+// ========================= PAYMENTS =========================
+
+model Payment {
+  id              String    @id @default(cuid())
+  orderId         String
+  order           Order     @relation(fields: [orderId], references: [id])
+  provider        String // mock | stripe | mercadopago | ...
+  // Provider's id is the idempotency anchor for webhooks.
+  providerRef     String    @unique
+  method          String // CARD | PIX | BOLETO
+  status          String    @default("PENDING") // PENDING | AUTHORIZED | CAPTURED | FAILED | CANCELLED | CHARGEBACK
+  currency        String
+  amountCents     Int
+  // Never a PAN. Provider token / last4 / brand only.
+  instrumentBrand String?
+  instrumentLast4 String?
+  failureCode     String?
+  riskScore       Int?
+  authorizedAt    DateTime?
+  capturedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  refunds Refund[]
+
+  @@index([orderId, status])
+}
+
+model Refund {
+  id               String   @id @default(cuid())
+  orderId          String
+  order            Order    @relation(fields: [orderId], references: [id])
+  paymentId        String
+  payment          Payment  @relation(fields: [paymentId], references: [id])
+  providerRef      String?  @unique
+  amountCents      Int
+  currency         String
+  reason           String // DEFECT | SPEC_DEVIATION | CANCELLED | SHIPPING_LOSS | GOODWILL | DISPUTE
+  kind             String   @default("FULL") // FULL | PARTIAL
+  status           String   @default("PENDING") // PENDING | SUCCEEDED | FAILED
+  approvedByUserId String?
+  createdAt        DateTime @default(now())
+
+  @@index([orderId])
+}
+
+// Every inbound provider event, stored before it is acted on. Replay-safe by construction.
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  provider    String
+  // Provider's own event id — the uniqueness constraint IS the idempotency guarantee.
+  externalId  String
+  eventType   String
+  signatureOk Boolean
+  payloadHash String
+  payloadJson String
+  status      String    @default("RECEIVED") // RECEIVED | PROCESSED | IGNORED | FAILED
+  processedAt DateTime?
+  error       String?
+  receivedAt  DateTime  @default(now())
+
+  @@unique([provider, externalId])
+  @@index([status, receivedAt])
+}
+
+model Coupon {
+  id               String    @id @default(cuid())
+  code             String    @unique
+  kind             String // PERCENT | FIXED | FREE_SHIPPING
+  // Percent in basis points (1000 = 10%) so no float ever touches money.
+  valueBp          Int       @default(0)
+  valueCents       Int       @default(0)
+  currency         String    @default("BRL")
+  minSubtotalCents Int       @default(0)
+  maxRedemptions   Int?
+  maxPerUser       Int       @default(1)
+  redeemedCount    Int       @default(0)
+  startsAt         DateTime?
+  endsAt           DateTime?
+  active           Boolean   @default(true)
+  // Restrict to a creator store / collection when it is a partner code.
+  creatorStoreId   String?
+  createdAt        DateTime  @default(now())
+
+  orders      Order[]
+  redemptions CouponRedemption[]
+}
+
+model CouponRedemption {
+  id          String   @id @default(cuid())
+  couponId    String
+  coupon      Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  userId      String
+  orderId     String
+  amountCents Int
+  createdAt   DateTime @default(now())
+
+  @@unique([couponId, orderId])
+  @@index([couponId, userId])
+}
+
+// ========================= MARKETPLACE: PRODUCERS =========================
+
+model Producer {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  studioName         String
+  bio                String?
+  city               String
+  state              String
+  countryCode        String    @default("BR")
+  // Trust ladder. Only admins move a producer up it.
+  verificationLevel  String    @default("UNVERIFIED") // UNVERIFIED | VERIFIED | TRUSTED | PREMIUM
+  verifiedAt         DateTime?
+  status             String    @default("PENDING") // PENDING | ACTIVE | PAUSED | SUSPENDED
+  // Capacity + quality signals feeding the matcher. Never client-writable.
+  weeklyCapacity     Int       @default(3)
+  activeJobCount     Int       @default(0)
+  acceptsRush        Boolean   @default(false)
+  maxComplexity      Int       @default(3)
+  qualityScore       Int       @default(700) // 0..1000, recomputed from outcomes
+  completionRateBp   Int       @default(0)
+  defectRateBp       Int       @default(0)
+  onTimeRateBp       Int       @default(0)
+  completedJobs      Int       @default(0)
+  avgResponseMinutes Int?
+  payoutMethod       String? // PIX | BANK
+  payoutRefLast4     String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  specializations  ProducerSpecialization[]
+  availability     ProducerAvailability[]
+  jobs             ProductionJob[]
+  payouts          Payout[]
+  verificationDocs VerificationDocument[]
+  reviews          Review[]
+
+  @@index([status, verificationLevel])
+}
+
+model ProducerSpecialization {
+  id         String   @id @default(cuid())
+  producerId String
+  producer   Producer @relation(fields: [producerId], references: [id], onDelete: Cascade)
+  kind       String // GARMENT | TECHNIQUE | MATERIAL
+  value      String // e.g. GARMENT:JACKET, TECHNIQUE:EMBROIDERY, MATERIAL:LEATHER
+  skillLevel Int      @default(3) // 1..5, self-declared then adjusted by outcomes
+
+  @@unique([producerId, kind, value])
+  @@index([kind, value])
+}
+
+model ProducerAvailability {
+  id         String   @id @default(cuid())
+  producerId String
+  producer   Producer @relation(fields: [producerId], references: [id], onDelete: Cascade)
+  weekStart  DateTime
+  slots      Int      @default(0)
+  slotsUsed  Int      @default(0)
+
+  @@unique([producerId, weekStart])
+}
+
+model VerificationDocument {
+  id                 String            @id @default(cuid())
+  producerId         String?
+  producer           Producer?         @relation(fields: [producerId], references: [id], onDelete: Cascade)
+  sellerAccountId    String?
+  sellerAccount      SellerAccount?    @relation(fields: [sellerAccountId], references: [id], onDelete: Cascade)
+  recruiterAccountId String?
+  recruiterAccount   RecruiterAccount? @relation(fields: [recruiterAccountId], references: [id], onDelete: Cascade)
+  kind               String // ID_DOCUMENT | COMPANY_REGISTRATION | TAX_ID | PORTFOLIO | ADDRESS_PROOF
+  fileId             String
+  file               StoredFile        @relation(fields: [fileId], references: [id])
+  status             String            @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewNotes        String? // internal only, never exposed to the subject
+  reviewedByUserId   String?
+  reviewedAt         DateTime?
+  createdAt          DateTime          @default(now())
+
+  @@index([status])
+}
+
+// ========================= PRODUCTION =========================
+
+model ProductionJob {
+  id              String         @id @default(cuid())
+  reference       String         @unique
+  orderId         String
+  order           Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId     String
+  orderItem       OrderItem      @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  // A job is pinned to the exact approved spec version. Not "the design".
+  designVersionId String?
+  designVersion   DesignVersion? @relation(fields: [designVersionId], references: [id])
+
+  producerId           String?
+  producer             Producer? @relation(fields: [producerId], references: [id])
+  // Split jobs: one order item can fan out to sewing + embroidery + 3D printing.
+  role                 String    @default("PRIMARY") // PRIMARY | EMBROIDERY | PRINTING | THREE_D | FINISHING
+  status               String    @default("UNASSIGNED")
+  // What the marketplace pays for this job, agreed before acceptance.
+  payoutCents          Int       @default(0)
+  currency             String    @default("BRL")
+  dueAt                DateTime?
+  offeredAt            DateTime?
+  acceptedAt           DateTime?
+  completedAt          DateTime?
+  rejectionReason      String?
+  matchScore           Int?
+  matchExplanationJson String? // internal, admin-visible only
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stages  ProductionStage[]
+  assets  ProductionAsset[]
+  checks  QualityCheck[]
+  offers  JobOffer[]
+  threads MessageThread[]
+  payouts PayoutItem[]
+
+  @@index([producerId, status])
+  @@index([status, createdAt])
+}
+
+model JobOffer {
+  id            String        @id @default(cuid())
+  jobId         String
+  job           ProductionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  producerId    String
+  score         Int
+  status        String        @default("OFFERED") // OFFERED | ACCEPTED | DECLINED | EXPIRED | WITHDRAWN
+  declineReason String?
+  expiresAt     DateTime
+  createdAt     DateTime      @default(now())
+  respondedAt   DateTime?
+
+  @@unique([jobId, producerId])
+  @@index([producerId, status])
+}
+
+model ProductionStage {
+  id            String        @id @default(cuid())
+  jobId         String
+  job           ProductionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  stage         String // MATERIALS | CUTTING | SEWING | EMBROIDERY | PRINTING | FINISHING | QC | PACKED
+  status        String        @default("PENDING") // PENDING | IN_PROGRESS | DONE | BLOCKED
+  note          String?
+  blockedReason String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  position      Int           @default(0)
+
+  @@unique([jobId, stage])
+  @@index([jobId, position])
+}
+
+model ProductionAsset {
+  id                String        @id @default(cuid())
+  jobId             String
+  job               ProductionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  fileId            String
+  file              StoredFile    @relation(fields: [fileId], references: [id])
+  kind              String // PROGRESS | QC | DEFECT | PACKING
+  stage             String?
+  caption           String?
+  visibleToCustomer Boolean       @default(true)
+  createdAt         DateTime      @default(now())
+
+  @@index([jobId, kind])
+}
+
+model QualityCheck {
+  id              String        @id @default(cuid())
+  jobId           String
+  job             ProductionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  // Measurable criteria, not "looks good".
+  checklistJson   String
+  measuredJson    String?
+  toleranceMm     Int           @default(15)
+  result          String        @default("PENDING") // PENDING | PASS | FAIL | PASS_WITH_NOTES
+  failures        String?
+  inspectorType   String // PRODUCER | PLATFORM | CUSTOMER
+  inspectorUserId String?
+  createdAt       DateTime      @default(now())
+
+  @@index([jobId, result])
+}
+
+// ========================= SHIPPING =========================
+
+model Shipment {
+  id                  String    @id @default(cuid())
+  orderId             String
+  order               Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  addressId           String?
+  address             Address?  @relation(fields: [addressId], references: [id])
+  // Carrier-agnostic. The provider adapter fills the rest.
+  provider            String // manual | correios | carrierB
+  service             String?
+  trackingCode        String?
+  labelFileKey        String?
+  status              String    @default("PENDING") // PENDING | LABEL_CREATED | PICKED_UP | IN_TRANSIT | OUT_FOR_DELIVERY | DELIVERED | FAILED_ATTEMPT | RETURNED | LOST
+  costCents           Int       @default(0)
+  currency            String    @default("BRL")
+  estimatedDeliveryAt DateTime?
+  shippedAt           DateTime?
+  deliveredAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  events ShipmentEvent[]
+
+  @@index([orderId, status])
+  @@index([trackingCode])
+}
+
+model ShipmentEvent {
+  id          String   @id @default(cuid())
+  shipmentId  String
+  shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  // Deduplicated on (shipmentId, externalId) so carrier replays are harmless.
+  externalId  String?
+  code        String
+  description String
+  location    String?
+  occurredAt  DateTime
+  createdAt   DateTime @default(now())
+
+  @@unique([shipmentId, externalId])
+  @@index([shipmentId, occurredAt])
+}
+
+// ========================= REWARDS =========================
+
+model Campaign {
+  id               String   @id @default(cuid())
+  slug             String   @unique
+  name             String
+  description      String
+  // Rule DSL evaluated ONLY on the server against settled orders.
+  ruleJson         String
+  startsAt         DateTime
+  endsAt           DateTime
+  active           Boolean  @default(false)
+  maxGrantsTotal   Int?
+  maxGrantsPerUser Int      @default(1)
+  grantedCount     Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  rewards Reward[]
+  grants  RewardGrant[]
+}
+
+model Reward {
+  id                String   @id @default(cuid())
+  campaignId        String
+  campaign          Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  name              String
+  kind              String // STICKER | PIN | MINIATURE_3D | DIGITAL | DISCOUNT
+  description       String?
+  imageUrl          String?
+  // Rights posture: original sculpts vs licensed characters are not the same thing.
+  rightsBasis       String   @default("ORIGINAL") // ORIGINAL | LICENSED
+  licensor          String?
+  inventoryTotal    Int      @default(0)
+  inventoryReserved Int      @default(0)
+  inventoryGranted  Int      @default(0)
+
+  grants RewardGrant[]
+}
+
+model RewardGrant {
+  id                  String    @id @default(cuid())
+  campaignId          String
+  campaign            Campaign  @relation(fields: [campaignId], references: [id])
+  rewardId            String
+  reward              Reward    @relation(fields: [rewardId], references: [id])
+  userId              String
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // The order whose settlement qualified the user — one qualifying order, one grant.
+  qualifyingOrderId   String?
+  qualifyingOrder     Order?    @relation(fields: [qualifyingOrderId], references: [id])
+  status              String    @default("GRANTED") // GRANTED | RESERVED | SHIPPED | REVOKED
+  revokeReason        String?
+  // Guards against the reward-farming pattern: refund the order, keep the miniature.
+  settlementCheckedAt DateTime?
+  createdAt           DateTime  @default(now())
+
+  @@unique([campaignId, qualifyingOrderId])
+  @@index([userId, status])
+}
+
+// ========================= CREATOR ECONOMY =========================
+
+model CreatorStore {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug            String    @unique
+  name            String
+  bio             String?
+  // Where their audience is — used for verification, not for display bragging.
+  primaryPlatform String? // YOUTUBE | TWITCH | TIKTOK | INSTAGRAM | OTHER
+  primaryHandle   String?
+  status          String    @default("PENDING") // PENDING | ACTIVE | PAUSED | SUSPENDED
+  verifiedAt      DateTime?
+  // Platform take rate in basis points. Set by admins, never by the creator.
+  commissionBp    Int       @default(1500)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  products   Product[]
+  orderItems OrderItem[]
+  payouts    Payout[]
+}
+
+model SellerAccount {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  legalName        String
+  taxId            String
+  taxIdHash        String    @unique
+  companyName      String?
+  status           String    @default("PENDING") // PENDING | APPROVED | REJECTED | SUSPENDED
+  // Wholesale discount in basis points, granted only after document review.
+  discountBp       Int       @default(0)
+  minOrderUnits    Int       @default(10)
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  documents VerificationDocument[]
+}
+
+// ========================= JOBS BOARD (the "Workana" side) =========================
+
+model RecruiterAccount {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  legalName        String
+  companyName      String
+  taxId            String
+  taxIdHash        String    @unique
+  website          String?
+  // A recruiter cannot post until a human approves the company evidence.
+  // This is the anti-scam gate the whole jobs board depends on.
+  status           String    @default("PENDING") // PENDING | APPROVED | REJECTED | SUSPENDED
+  rejectionReason  String?
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  strikeCount      Int       @default(0)
+  createdAt        DateTime  @default(now())
+
+  documents VerificationDocument[]
+  postings  JobPosting[]
+}
+
+model JobPosting {
+  id                 String           @id @default(cuid())
+  recruiterAccountId String
+  recruiterAccount   RecruiterAccount @relation(fields: [recruiterAccountId], references: [id], onDelete: Cascade)
+  postedByUserId     String
+  postedBy           User             @relation(fields: [postedByUserId], references: [id])
+  title              String
+  description        String
+  discipline         String // SEWING | PATTERN_MAKING | EMBROIDERY | ILLUSTRATION | GRAPHIC_DESIGN | THREE_D | PHOTOGRAPHY
+  engagement         String // FULL_TIME | PART_TIME | CONTRACT | PROJECT
+  locationMode       String // ONSITE | HYBRID | REMOTE
+  city               String?
+  state              String?
+  // Salary bands are integers of minor units; both bounds or neither.
+  payMinCents        Int?
+  payMaxCents        Int?
+  currency           String           @default("BRL")
+  payPeriod          String? // HOUR | MONTH | PROJECT
+  status             String           @default("PENDING_REVIEW") // PENDING_REVIEW | OPEN | CLOSED | REJECTED | REMOVED
+  moderationNotes    String?
+  expiresAt          DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  applications JobApplication[]
+
+  @@index([status, discipline])
+}
+
+model JobApplication {
+  id              String     @id @default(cuid())
+  postingId       String
+  posting         JobPosting @relation(fields: [postingId], references: [id], onDelete: Cascade)
+  applicantUserId String
+  applicant       User       @relation(fields: [applicantUserId], references: [id], onDelete: Cascade)
+  coverNote       String?
+  portfolioUrl    String?
+  status          String     @default("SUBMITTED") // SUBMITTED | VIEWED | SHORTLISTED | REJECTED | WITHDRAWN
+  createdAt       DateTime   @default(now())
+
+  @@unique([postingId, applicantUserId])
+  @@index([applicantUserId, status])
+}
+
+// ========================= SUBSCRIPTIONS (Designer plan etc.) =========================
+
+model Plan {
+  id               String  @id @default(cuid())
+  code             String  @unique // FREE | DESIGNER | ATELIER_PRO
+  name             String
+  priceCents       Int
+  currency         String  @default("USD")
+  interval         String  @default("MONTH")
+  // Entitlements are a server-side allowlist. The client never asserts them.
+  entitlementsJson String
+  active           Boolean @default(true)
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId             String
+  plan               Plan     @relation(fields: [planId], references: [id])
+  status             String   @default("ACTIVE") // ACTIVE | PAST_DUE | CANCELLED | EXPIRED
+  provider           String   @default("mock")
+  providerRef        String?  @unique
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([userId, status])
+}
+
+// Metered usage for AI features — the budget guard and the abuse guard in one.
+model UsageCounter {
+  id        String   @id @default(cuid())
+  userId    String
+  feature   String // AI_ANALYSIS | AI_CONCEPT | AI_RECOMMEND
+  periodKey String // YYYY-MM or YYYY-MM-DD
+  used      Int      @default(0)
+  limit     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, feature, periodKey])
+}
+
+// ========================= RECOMMENDATIONS =========================
+
+// Raw behavioural signal. Minimised, per-user, deletable, never sold.
+model InteractionEvent {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Anonymous visitors get a rotating pseudonymous id, not a fingerprint.
+  anonId     String?
+  kind       String // VIEW | SEARCH | ADD_TO_CART | PURCHASE | SAVE | CUSTOMIZE | DWELL
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  // For SEARCH: the normalised query. For others: null.
+  query      String?
+  // Denormalised facets at event time so the scorer never needs a join fan-out.
+  facetsJson String?
+  weight     Int      @default(1)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([anonId, createdAt])
+  @@index([productId, kind])
+}
+
+// Materialised affinity vector, recomputed incrementally. Cheap to read at render time.
+model TasteProfile {
+  id           String    @id @default(cuid())
+  userId       String?   @unique
+  anonId       String?   @unique
+  // { "STYLE:techwear": 41, "MOTIF:mecha": 22, ... } — integer scores, decayed by a job.
+  affinityJson String
+  eventCount   Int       @default(0)
+  lastEventAt  DateTime?
+  updatedAt    DateTime  @updatedAt
+}
+
+// ========================= REVIEWS / SUPPORT / TRUST =========================
+
+model Review {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId          String
+  order            Order     @relation(fields: [orderId], references: [id])
+  productId        String?
+  product          Product?  @relation(fields: [productId], references: [id])
+  producerId       String?
+  producer         Producer? @relation(fields: [producerId], references: [id])
+  rating           Int
+  title            String?
+  body             String?
+  // Only reviews attached to a delivered order are ever published.
+  verifiedPurchase Boolean   @default(true)
+  status           String    @default("PENDING") // PENDING | PUBLISHED | REJECTED | HIDDEN
+  moderationNotes  String?
+  createdAt        DateTime  @default(now())
+
+  @@unique([orderId, productId])
+  @@index([productId, status])
+}
+
+model MessageThread {
+  id        String         @id @default(cuid())
+  orderId   String?
+  order     Order?         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  jobId     String?
+  job       ProductionJob? @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  subject   String
+  kind      String         @default("ORDER") // ORDER | CLARIFICATION | SUPPORT | DISPUTE
+  status    String         @default("OPEN") // OPEN | AWAITING_CUSTOMER | AWAITING_PRODUCER | RESOLVED | CLOSED
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  messages     Message[]
+  participants ThreadParticipant[]
+
+  @@index([orderId])
+  @@index([jobId])
+}
+
+// Explicit participation rows: the ONLY thing that grants read access to a thread.
+model ThreadParticipant {
+  id         String        @id @default(cuid())
+  threadId   String
+  thread     MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  userId     String
+  role       String // CUSTOMER | PRODUCER | SUPPORT | ADMIN
+  lastReadAt DateTime?
+
+  @@unique([threadId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id              String        @id @default(cuid())
+  threadId        String
+  thread          MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  authorUserId    String
+  author          User          @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+  body            String
+  // Internal notes are visible to staff only and never to the customer or producer.
+  internal        Boolean       @default(false)
+  attachmentsJson String?
+  createdAt       DateTime      @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+model Dispute {
+  id               String    @id @default(cuid())
+  orderId          String
+  order            Order     @relation(fields: [orderId], references: [id])
+  openedByUserId   String
+  openedBy         User      @relation(fields: [openedByUserId], references: [id])
+  category         String // DEFECT | NOT_AS_APPROVED | MEASUREMENT | LATE | LOST | DAMAGED | OTHER
+  // Whose error it was decides who pays for the remake.
+  faultAttribution String? // PLATFORM | PRODUCER | CUSTOMER | CARRIER | UNDETERMINED
+  description      String
+  status           String    @default("OPEN") // OPEN | INVESTIGATING | AWAITING_EVIDENCE | RESOLVED | REJECTED
+  resolution       String? // REMAKE | PARTIAL_REFUND | FULL_REFUND | REJECTED | GOODWILL
+  resolutionNotes  String?
+  resolvedByUserId String?
+  resolvedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([status, createdAt])
+}
+
+model CopyrightReport {
+  id                 String    @id @default(cuid())
+  reporterUserId     String?
+  reporter           User?     @relation(fields: [reporterUserId], references: [id])
+  reporterEmail      String
+  reporterOrg        String?
+  // What is being reported: a product, a creator store, a design, an upload.
+  targetType         String // PRODUCT | DESIGN | CREATOR_STORE | REFERENCE_IMAGE | REVIEW
+  targetId           String
+  claimedWork        String
+  rightsEvidence     String
+  goodFaithStatement Boolean   @default(false)
+  status             String    @default("RECEIVED") // RECEIVED | REVIEWING | UPHELD | REJECTED | COUNTER_NOTICED | WITHDRAWN
+  actionTaken        String? // NONE | DELISTED | REMOVED | ACCOUNT_STRIKE | ACCOUNT_SUSPENDED
+  reviewedByUserId   String?
+  reviewedAt         DateTime?
+  createdAt          DateTime  @default(now())
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+}
+
+model ModerationCase {
+  id              String    @id @default(cuid())
+  targetType      String // REFERENCE_IMAGE | DESIGN | PRODUCT | REVIEW | MESSAGE | JOB_POSTING | CREATOR_STORE
+  targetId        String
+  reason          String // IP | PROHIBITED | HARASSMENT | FRAUD | UNSAFE_MANUFACTURING | MALWARE | OTHER
+  severity        String    @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  source          String // AUTOMATED | USER_REPORT | STAFF
+  detail          String?
+  status          String    @default("OPEN") // OPEN | ACTIONED | DISMISSED
+  decision        String?
+  decidedByUserId String?
+  decidedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([status, severity])
+  @@index([targetType, targetId])
+}
+
+model FraudSignal {
+  id        String   @id @default(cuid())
+  userId    String?
+  orderId   String?
+  kind      String // VELOCITY | REWARD_FARMING | COUPON_ABUSE | CARD_TESTING | ACCOUNT_TAKEOVER | REFUND_ABUSE | DUPLICATE_IDENTITY
+  score     Int      @default(0)
+  detail    String?
+  action    String   @default("LOGGED") // LOGGED | CHALLENGED | HELD | BLOCKED
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([kind, createdAt])
+}
+
+// ========================= PAYOUTS =========================
+
+model Payout {
+  id               String        @id @default(cuid())
+  producerId       String?
+  producer         Producer?     @relation(fields: [producerId], references: [id])
+  creatorStoreId   String?
+  creatorStore     CreatorStore? @relation(fields: [creatorStoreId], references: [id])
+  periodStart      DateTime
+  periodEnd        DateTime
+  currency         String        @default("BRL")
+  grossCents       Int           @default(0)
+  feeCents         Int           @default(0)
+  netCents         Int           @default(0)
+  status           String        @default("PENDING") // PENDING | APPROVED | PAID | FAILED | ON_HOLD
+  approvedByUserId String?
+  providerRef      String?
+  paidAt           DateTime?
+  createdAt        DateTime      @default(now())
+
+  items PayoutItem[]
+
+  @@index([status, periodEnd])
+}
+
+model PayoutItem {
+  id          String         @id @default(cuid())
+  payoutId    String
+  payout      Payout         @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  jobId       String?
+  job         ProductionJob? @relation(fields: [jobId], references: [id])
+  orderItemId String?
+  description String
+  amountCents Int
+
+  @@index([payoutId])
+}
+
+// ========================= PLATFORM =========================
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  title     String
+  body      String
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+// WHO / WHAT / WHEN / TARGET / OLD / NEW / WHY — append-only, never updated.
+model AuditLog {
+  id            String   @id @default(cuid())
+  actorUserId   String?
+  actor         User?    @relation("AuditActor", fields: [actorUserId], references: [id])
+  actorRole     String?
+  actorIpHash   String?
+  action        String
+  targetType    String
+  targetId      String
+  oldStateJson  String?
+  newStateJson  String?
+  reason        String?
+  correlationId String?
+  createdAt     DateTime @default(now())
+
+  @@index([targetType, targetId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  enabled     Boolean  @default(false)
+  description String?
+  // Percentage rollout in basis points, bucketed by a stable hash of the user id.
+  rolloutBp   Int      @default(0)
+  updatedAt   DateTime @updatedAt
+}
+
+// Generic durable job queue. Backed by the DB in dev; swap the driver in production.
+model JobQueueItem {
+  id          String    @id @default(cuid())
+  queue       String
+  payloadJson String
+  // Dedup key makes enqueue idempotent for webhook-triggered work.
+  dedupeKey   String?   @unique
+  status      String    @default("PENDING") // PENDING | RUNNING | DONE | FAILED | DEAD
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  runAfter    DateTime  @default(now())
+  lastError   String?
+  lockedAt    DateTime?
+  lockedBy    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([queue, status, runAfter])
+}
+
+model RateLimitBucket {
+  id           String    @id @default(cuid())
+  key          String    @unique
+  count        Int       @default(0)
+  windowStart  DateTime  @default(now())
+  blockedUntil DateTime?
+
+  @@index([windowStart])
+}

@@ -84,10 +84,12 @@ function redact(value: unknown, depth = 0): unknown {
 }
 
 export interface LogContext {
-  correlationId?: string;
-  userId?: string;
-  role?: string;
-  route?: string;
+  // Nullable because "we looked and there was no user" is a meaningful thing to
+  // record, and forcing call sites to coerce it hides that distinction.
+  correlationId?: string | null;
+  userId?: string | null;
+  role?: string | null;
+  route?: string | null;
   [key: string]: unknown;
 }
 

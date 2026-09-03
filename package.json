@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "license": "UNLICENSED",
-  "engines": { "node": ">=20.11" },
+  "engines": {
+    "node": ">=20.11"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
@@ -15,9 +17,13 @@
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:seed": "tsx prisma/seed.ts",
-    "db:reset": "prisma db push --force-reset && npm run db:seed"
+    "db:reset": "prisma db push --force-reset && npm run db:seed",
+    "worker": "tsx scripts/worker.ts",
+    "dev:all": "concurrently -n web,worker -c cyan,magenta \"next dev\" \"tsx scripts/worker.ts\""
   },
-  "prisma": { "seed": "tsx prisma/seed.ts" },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "dependencies": {
     "@prisma/client": "^6.1.0",
     "next": "^15.1.6",

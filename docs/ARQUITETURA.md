@@ -177,13 +177,26 @@ do cliente: um falso positivo que bane alguém é pior que o ataque.
 ### Fronteiras de confiança
 
 ```
-Navegador ──┬─→ Server Component / Server Action ──→ domínio ──→ banco
+Navegador ──→ middleware (pré-filtro) ──┬─→ Server Component / Server Action ──→ domínio ──→ banco
             └─→ /api/files (assinatura + sessão + autorização por arquivo)
 
 Provedor de pagamento ──→ /api/webhooks/payments (HMAC + janela + idempotência)
 Transportadora        ──→ /api/webhooks/shipping (HMAC + janela + idempotência)
 Provedor de IA        ←── só saída validada por schema
 ```
+
+### Pré-filtro de borda
+`src/middleware.ts` responde cedo os casos óbvios: sem cookie de sessão em rota
+privada vira 307 para o login, e a simulação de pagamento vira 404 fora de
+desenvolvimento. Existe por um motivo concreto: `redirect()` e `notFound()`
+chamados dentro de um componente que já começou a fazer streaming **não
+conseguem alterar o status HTTP** — o conteúdo saía certo com um 200 no cabeçalho.
+
+**Não é autenticação.** A borda não tem banco, então enxerga apenas a
+*presença* do cookie, nunca sua validade, expiração, revogação ou papel. Toda
+página e toda ação refazem a verificação real. É um filtro, nunca a fronteira —
+e há teste garantindo que rotas de API nunca são redirecionadas, porque um
+webhook que recebe 307 para a tela de login é uma integração quebrada.
 
 ### Autenticação
 scrypt (N=2^16) com parâmetros dentro do hash. Sessões opacas, SHA-256 no banco,

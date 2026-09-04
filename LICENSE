@@ -1,0 +1,56 @@
+KAIJU — LICENÇA PROPRIETÁRIA
+Copyright (c) 2026 KAIJU Atelier. Todos os direitos reservados.
+
+═══════════════════════════════════════════════════════════════════════════════
+
+1. CONCESSÃO
+
+Nenhuma licença é concedida. Este software e a documentação que o acompanha são
+obra proprietária e confidencial da KAIJU Atelier.
+
+2. RESTRIÇÕES
+
+Sem autorização prévia e por escrito do titular, é proibido:
+
+  (a) usar, copiar, modificar, mesclar, publicar, distribuir, sublicenciar ou
+      vender cópias deste software, no todo ou em parte;
+  (b) realizar engenharia reversa, descompilar ou desmontar o software;
+  (c) remover ou alterar avisos de propriedade;
+  (d) usar o software para operar um serviço concorrente;
+  (e) usar as marcas, nomes ou identidade visual da KAIJU.
+
+3. COMPONENTES ESPECIFICAMENTE PROTEGIDOS
+
+  · Motor de design por IA e os prompts internos do sistema
+  · Algoritmo de matching de produção e seus pesos
+  · Motor de recomendação e o vocabulário de facetas
+  · Motor de precificação e a tabela de custos
+  · Sistema de design KAIJU (tokens, componentes, direção de arte)
+  · Personagens, esculturas e ilustrações originais
+  · Marca nominativa e figurativa KAIJU
+
+Os prompts internos do sistema e a lógica de pontuação são segredo comercial.
+Sua divulgação não autorizada, além de violar esta licença, pode configurar
+apropriação indevida de segredo comercial sob a legislação aplicável.
+
+4. SOFTWARE DE TERCEIROS
+
+Depende de bibliotecas de código aberto sob suas próprias licenças, listadas em
+package.json e nos respectivos pacotes. Esta licença não se aplica a elas.
+
+5. SDK FUTURO
+
+Caso um SDK público seja publicado, ele o será sob Apache-2.0 em repositório
+próprio, com aviso explícito. Nada neste repositório está sob licença aberta.
+
+6. AUSÊNCIA DE GARANTIA
+
+O SOFTWARE É FORNECIDO "COMO ESTÁ", SEM GARANTIA DE QUALQUER NATUREZA, EXPRESSA
+OU IMPLÍCITA, INCLUINDO MAS NÃO SE LIMITANDO ÀS GARANTIAS DE COMERCIABILIDADE,
+ADEQUAÇÃO A UMA FINALIDADE ESPECÍFICA E NÃO VIOLAÇÃO. EM NENHUMA HIPÓTESE OS
+TITULARES SERÃO RESPONSÁVEIS POR QUALQUER REIVINDICAÇÃO, DANO OU OUTRA
+RESPONSABILIDADE DECORRENTE DO SOFTWARE OU DE SEU USO.
+
+7. CONTATO
+
+Licenciamento e parcerias: legal@kaiju.example

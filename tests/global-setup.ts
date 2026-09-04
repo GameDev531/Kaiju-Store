@@ -10,7 +10,13 @@ import { rmSync, existsSync } from "node:fs";
  */
 export const TEST_DATABASE_URL = "file:./prisma/vitest.db";
 
-export default function setup(): void {
+/**
+ * Returns a teardown function. Individual test files must NOT disconnect the
+ * shared Prisma client — doing so in one file's afterAll tears the connection
+ * down for every file that runs afterwards, which produced a failure that only
+ * appeared when the whole suite ran together.
+ */
+export default function setup(): () => void {
   for (const suffix of ["", "-journal", "-wal", "-shm"]) {
     const path = `./prisma/vitest.db${suffix}`;
     if (existsSync(path)) rmSync(path);
@@ -19,4 +25,11 @@ export default function setup(): void {
     env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL },
     stdio: "pipe",
   });
+
+  return () => {
+    for (const suffix of ["", "-journal", "-wal", "-shm"]) {
+      const path = `./prisma/vitest.db${suffix}`;
+      if (existsSync(path)) rmSync(path);
+    }
+  };
 }

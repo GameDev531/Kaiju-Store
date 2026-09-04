@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { db } from "@/server/db";
 import { hashPassword, publicReference } from "@/server/lib/crypto";
 import { transitionOrder, getOrderForCustomer, getPublicTracking } from "@/server/domain/orders";
@@ -23,10 +23,6 @@ let customerA: string;
 let customerB: string;
 let producerA: string;
 let producerB: string;
-
-afterAll(async () => {
-  await db.$disconnect();
-});
 
 /**
  * Truncates every table in dependency-free order.

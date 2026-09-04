@@ -496,9 +496,15 @@ export async function assertQuotationValid(quotationId: string, userId: string) 
       action: "Peça um novo orçamento — os preços de tecido mudam e não queremos cobrar um valor desatualizado.",
     });
   }
-  if (quotation.designVersion.specHash !== quotation.specHash) {
+  // Recompute from the version's CURRENT content rather than trusting the hash
+  // column. Comparing two stored columns would only catch a re-approval; it
+  // would miss the content itself changing underneath a live quote, which is
+  // exactly the case that must never reach a cutting table at yesterday's price.
+  const currentHash = specHash(parseSpecJson(quotation.designVersion.specJson));
+  if (currentHash !== quotation.specHash) {
     throw new AppError("SPEC_CHANGED", "A ficha técnica mudou depois deste orçamento.", {
       action: "Aprove a versão atual e gere um novo orçamento.",
+      internal: { quoted: quotation.specHash, current: currentHash },
     });
   }
   return quotation;

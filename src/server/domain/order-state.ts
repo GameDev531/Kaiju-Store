@@ -99,6 +99,9 @@ const TRANSITIONS: Record<OrderStatus, readonly TransitionRule[]> = {
   ],
   SEWING: [
     T("FINISHING", ["PRODUCER"], "Acabamento iniciado"),
+    // Embroidery, printing and 3D jobs carry no FINISHING stage, so a quality
+    // check can legitimately follow sewing directly.
+    T("QUALITY_CONTROL", ["PRODUCER"], "Enviado para controle de qualidade"),
     T("REQUIRES_CUSTOMER_ACTION", ["PRODUCER"], "Dúvida durante a costura"),
   ],
   FINISHING: [T("QUALITY_CONTROL", ["PRODUCER"], "Enviado para controle de qualidade")],

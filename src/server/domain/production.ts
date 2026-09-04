@@ -393,6 +393,21 @@ export async function submitQualityCheck(params: {
     data: { status: result === "PASS" ? "QC_PENDING" : "QC_FAILED" },
   });
 
+  // Recording a quality check IS the order entering quality control. Without
+  // this, a producer who checks the garment without first ticking the QC stage
+  // leaves the order sitting in SEWING, and the later "ready to ship" move is
+  // refused by the state machine with an error that explains nothing.
+  await transitionOrder({
+    orderId: job.orderId,
+    to: result === "PASS" ? "QUALITY_CONTROL" : "REQUIRES_PRODUCER_ACTION",
+    actor: result === "PASS" ? "PRODUCER" : "SYSTEM",
+    actorUserId: params.inspectorUserId,
+    reason:
+      result === "PASS"
+        ? "Conferência de qualidade registrada."
+        : `Reprovado no controle de qualidade: ${failures.slice(0, 2).join("; ")}`,
+  }).catch((error) => log.debug("production.qc_transition_skipped", { jobId: params.jobId, error }));
+
   await recordAudit({
     actorUserId: params.inspectorUserId,
     action: "job.qc_submitted",

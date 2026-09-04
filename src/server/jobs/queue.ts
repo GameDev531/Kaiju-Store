@@ -43,6 +43,17 @@ export async function enqueue(
   const runAfter = new Date(Date.now() + (options.delaySeconds ?? 0) * 1000);
   const dedupeKey = options.dedupeKey ? `${queue}:${sha256(options.dedupeKey).slice(0, 40)}` : null;
 
+  // Check first when deduping. Suppression is the expected outcome here, not a
+  // failure, and letting it surface as a constraint violation fills the error
+  // log with normal behaviour — which is how real errors get ignored.
+  if (dedupeKey) {
+    const existing = await db.jobQueueItem.findUnique({ where: { dedupeKey }, select: { id: true } });
+    if (existing) {
+      log.debug("queue.duplicate_suppressed", { queue, dedupeKey });
+      return null;
+    }
+  }
+
   try {
     const item = await db.jobQueueItem.create({
       data: {
@@ -55,10 +66,10 @@ export async function enqueue(
     });
     return item.id;
   } catch (error) {
-    // Unique violation on dedupeKey means the work is already queued. That is a
-    // success from the caller's point of view, not an error.
+    // Two workers racing past the check above. The constraint is the real
+    // guarantee; this branch just makes losing the race a success.
     if (typeof error === "object" && error !== null && "code" in error && (error as { code: string }).code === "P2002") {
-      log.debug("queue.duplicate_suppressed", { queue, dedupeKey });
+      log.debug("queue.duplicate_suppressed", { queue, dedupeKey, viaRace: true });
       return null;
     }
     throw error;

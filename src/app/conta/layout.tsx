@@ -10,6 +10,7 @@ const NAV = [
   { href: "/conta/medidas", label: "Medidas" },
   { href: "/conta/enderecos", label: "Endereços" },
   { href: "/conta/colecao", label: "Minha coleção" },
+  { href: "/conta/seguranca", label: "Segurança" },
   { href: "/conta/privacidade", label: "Privacidade e dados" },
 ];
 

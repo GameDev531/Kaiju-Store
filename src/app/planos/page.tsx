@@ -79,13 +79,27 @@ export default async function PlansPage() {
                   })}
                 </ul>
 
-                <Link
-                  href={plan.priceCents === 0 ? "/cadastrar" : `/planos/assinar?plano=${plan.code}`}
-                  className={highlighted ? "btn btn-primary btn-block" : "btn btn-outline btn-block"}
-                  style={{ marginTop: "1.75rem" }}
-                >
-                  {plan.priceCents === 0 ? "Começar grátis" : `Assinar ${plan.name}`}
-                </Link>
+                {plan.priceCents === 0 ? (
+                  <Link href="/cadastrar" className="btn btn-outline btn-block" style={{ marginTop: "1.75rem" }}>
+                    Começar grátis
+                  </Link>
+                ) : (
+                  // Recurring billing is not connected yet. Offering a subscribe
+                  // button that leads nowhere would be worse than saying so.
+                  <div style={{ marginTop: "1.75rem" }}>
+                    <p
+                      className="badge"
+                      style={{ width: "100%", justifyContent: "center", paddingBlock: "0.7rem" }}
+                    >
+                      Assinaturas abrem em breve
+                    </p>
+                    <p style={{ fontSize: "0.8rem", color: "var(--color-ink-faint)", marginTop: "0.6rem", textAlign: "center", lineHeight: 1.5 }}>
+                      A cobrança recorrente ainda não está conectada.{" "}
+                      <Link href="/contato" className="link">Avise que tem interesse</Link> e
+                      chamamos você quando abrir.
+                    </p>
+                  </div>
+                )}
               </article>
             );
           })}

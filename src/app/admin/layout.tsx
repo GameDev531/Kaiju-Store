@@ -8,7 +8,7 @@ import { Label, Notice } from "@/components/ui";
 const NAV = [
   { href: "/admin", label: "Visão geral", permission: "admin.system.read" },
   { href: "/admin/pedidos", label: "Pedidos", permission: "admin.order.read" },
-  { href: "/admin/ateliês", label: "Ateliês", permission: "admin.producer.verify" },
+  { href: "/admin/atelies", label: "Ateliês", permission: "admin.producer.verify" },
   { href: "/admin/moderacao", label: "Moderação", permission: "content.moderate" },
   { href: "/admin/auditoria", label: "Auditoria", permission: "admin.audit.read" },
   { href: "/admin/saude", label: "Saúde do sistema", permission: "admin.system.read" },

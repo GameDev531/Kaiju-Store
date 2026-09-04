@@ -272,8 +272,9 @@ Honestidade sobre escopo:
 | Derivadas de imagem | Handler é no-op explícito; sem thumbnail nem remoção de EXIF |
 | Antivírus real | O scan revalida os bytes; não há motor de assinatura |
 | Gerador de conceito | Interface e plano existem; geração não implementada |
-| Mensageria cliente↔ateliê | Modelo de dados completo; interface não construída |
-| Assinaturas | Planos e entitlements existem; cobrança recorrente não |
-| Painel de disputa | Modelo e estados existem; fluxo de resolução não construído |
+| Mensageria cliente↔ateliê | Modelo de dados completo; interface não construída. O canal de impedimento funciona (o ateliê registra, o pedido pausa, o cliente é avisado); a resposta passa pelo suporte |
+| Assinaturas | Planos e entitlements existem; cobrança recorrente não. A página de planos diz isso em vez de oferecer um botão que não leva a lugar nenhum |
+| Painel de disputa | Modelo e estados existem; a abertura de chamado passa pelo suporte |
+| Cadastro de contratante, criador e revenda | Requisitos e política publicados; o envio de documentação é por e-mail enquanto o upload seguro não existe |
 
 Cada no-op é **explícito no código**, não uma simulação que fingiria funcionar.

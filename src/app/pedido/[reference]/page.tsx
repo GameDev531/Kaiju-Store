@@ -60,7 +60,14 @@ export default async function OrderPage({ params }: { params: Promise<{ referenc
             {status === "REQUIRES_CUSTOMER_ACTION" ? (
               <>
                 {" "}
-                <Link href={`/conta/mensagens?pedido=${order.reference}`} className="link">Responder ao ateliê</Link>
+                <Link href={`/contato?assunto=pedido-${order.reference}`} className="link">
+                  Responder ao ateliê pelo suporte
+                </Link>
+                {" — "}
+                <span style={{ fontSize: "0.85rem" }}>
+                  a mensageria direta com o ateliê ainda está em construção; por enquanto o suporte
+                  faz a ponte e a produção fica pausada até a sua resposta.
+                </span>
               </>
             ) : null}
           </Notice>
@@ -239,8 +246,12 @@ export default async function OrderPage({ params }: { params: Promise<{ referenc
               <Notice tone="attention" title="Confira a peça em até 7 dias">
                 Meça e vista. Se algo divergir da ficha que você aprovou — medida fora da tolerância,
                 material trocado, detalhe faltando —{" "}
-                <Link href={`/conta/pedidos/${order.reference}/problema`} className="link">abra um chamado</Link>{" "}
-                dentro deste prazo. A Política de trocas explica quem arca com o quê em cada caso.
+                <Link href={`/contato?assunto=problema-${order.reference}`} className="link">
+                  abra um chamado
+                </Link>{" "}
+                dentro deste prazo, com fotos e o número deste pedido. A{" "}
+                <Link href="/politicas/trocas" className="link">Política de trocas</Link> explica quem
+                arca com o quê em cada caso.
               </Notice>
             </div>
           ) : null}

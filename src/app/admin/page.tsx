@@ -35,7 +35,7 @@ export default async function AdminHomePage() {
   const totalOrders = ordersByStatus.reduce((s, r) => s + r._count._all, 0);
 
   const queues = [
-    { label: "Ateliês aguardando verificação", count: pendingProducers, href: "/admin/ateliês", urgent: pendingProducers > 0 },
+    { label: "Ateliês aguardando verificação", count: pendingProducers, href: "/admin/atelies", urgent: pendingProducers > 0 },
     { label: "Casos de moderação abertos", count: openModeration, href: "/admin/moderacao", urgent: openModeration > 0 },
     { label: "Denúncias de direitos autorais", count: openCopyright, href: "/admin/moderacao?tipo=direitos", urgent: openCopyright > 0 },
     { label: "Trabalhos sem ateliê", count: unassignedJobs, href: "/admin/pedidos?filtro=sem-atelie", urgent: unassignedJobs > 0 },

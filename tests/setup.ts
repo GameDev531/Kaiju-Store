@@ -12,7 +12,7 @@ process.env.APP_ENV = "test";
 // One database for the whole suite, prepared by tests/global-setup.ts. Set here
 // (not with ??=) so a developer's shell DATABASE_URL can never point the tests
 // at a real database.
-process.env.DATABASE_URL = "file:./prisma/vitest.db";
+process.env.DATABASE_URL = "file:./vitest.db";
 process.env.AUTH_SECRET = "test-secret-not-used-anywhere-real-0123456789abcdef";
 process.env.APP_URL = "http://localhost:3000";
 process.env.STORAGE_DIR = "./var/test-storage";

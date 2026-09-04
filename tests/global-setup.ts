@@ -8,7 +8,13 @@ import { rmSync, existsSync } from "node:fs";
  * builds its Prisma client at import time, so the schema must already exist by
  * the time the first `import` statement is evaluated.
  */
-export const TEST_DATABASE_URL = "file:./prisma/vitest.db";
+/**
+ * O caminho é relativo ao diretório do schema (`prisma/`), não ao cwd — é assim
+ * que o Prisma resolve `file:`. Escrever "file:./prisma/vitest.db" aqui criava
+ * `prisma/prisma/vitest.db`, fora do .gitignore e fora do alcance da limpeza
+ * abaixo: o banco de teste nunca era zerado entre execuções.
+ */
+export const TEST_DATABASE_URL = "file:./vitest.db";
 
 /**
  * Returns a teardown function. Individual test files must NOT disconnect the

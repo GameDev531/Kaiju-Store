@@ -30,3 +30,6 @@ Thumbs.db
 # Test output
 coverage/
 .vitest/
+
+# Um erro de caminho relativo já criou prisma/prisma/ uma vez.
+prisma/prisma/

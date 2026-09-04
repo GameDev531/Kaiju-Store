@@ -99,6 +99,17 @@ export async function transitionOrder(input: TransitionInput): Promise<{ from: O
       correlationId: input.correlationId ?? null,
     });
 
+    // A cancelled or refunded order must return whatever it was holding. This
+    // lives here rather than at each call site so no future cancel path can
+    // forget it and quietly leak stock.
+    if (to === "CANCELLED" || to === "REFUNDED") {
+      const { releaseReservations } = await import("./stock");
+      await releaseReservations(
+        input.orderId,
+        input.reason ?? `Pedido movido para ${to}.`,
+      ).catch((error) => log.warn("orders.release_failed", { orderId: input.orderId, error }));
+    }
+
     // Side effects run after the transaction commits, as queued work — so a slow
     // e-mail provider can never hold a database transaction open.
     await enqueue(

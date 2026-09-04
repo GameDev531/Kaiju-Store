@@ -36,6 +36,7 @@ export const SITE = {
 
 export const NAV_PRIMARY = [
   { href: "/loja", label: "Loja" },
+  { href: "/estilos", label: "Estilos" },
   { href: "/colecoes", label: "Coleções" },
   { href: "/criar", label: "Criar minha peça" },
   { href: "/criadores", label: "Criadores" },
@@ -46,6 +47,7 @@ export const NAV_PRIMARY = [
 export const NAV_FOOTER = {
   Produto: [
     { href: "/loja", label: "Loja" },
+    { href: "/estilos", label: "Estilos" },
     { href: "/colecoes", label: "Coleções" },
     { href: "/criar", label: "Criar minha peça" },
     { href: "/recompensas", label: "Campanhas e colecionáveis" },

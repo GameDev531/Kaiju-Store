@@ -8,6 +8,7 @@ import { transitionOrder } from "./orders";
 import { parseSpecJson } from "./spec";
 import { quoteShipping } from "../shipping";
 import { paymentProvider } from "../payments";
+import { reserveStock, reservationDeadline, type PaymentMethodForReservation } from "./stock";
 import { recordAudit } from "./audit";
 import { enforceRateLimit, RATE_LIMITS } from "../lib/ratelimit";
 import { env } from "../lib/env";
@@ -237,6 +238,10 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
   const totalCents = Math.max(0, subtotal - discountCents + shippingCents);
 
   // ---- persist ----------------------------------------------------------
+  // How long the customer has to pay before the stock goes back to the catalogue.
+  // Short for instant methods, days for boleto — see RESERVATION_WINDOW_MINUTES.
+  const reservationExpiresAt = reservationDeadline(input.method as PaymentMethodForReservation);
+
   const order = await db.$transaction(async (tx) => {
     const created = await tx.order.create({
       data: {
@@ -254,6 +259,7 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
         creatorCommissionCents: resolved.reduce((s, l) => s + l.creatorCommissionCents, 0),
         couponId,
         shippingAddressId: address.id,
+        reservationExpiresAt,
       },
     });
 
@@ -277,23 +283,26 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
         },
       });
 
-      // Reserve stock inside the same transaction. The conditional update is the
-      // concurrency control: two buyers racing for the last unit, one loses.
-      if (line.variantId) {
-        const { count } = await tx.productVariant.updateMany({
-          where: { id: line.variantId, stockOnHand: { gte: line.quantity } },
-          data: { stockReserved: { increment: line.quantity } },
-        });
-        const variant = await tx.productVariant.findUnique({
-          where: { id: line.variantId },
-          select: { product: { select: { fulfilment: true, name: true } } },
-        });
-        if (count === 0 && variant?.product.fulfilment !== "MADE_TO_ORDER") {
-          throw new AppError("OUT_OF_STOCK", `"${variant?.product.name ?? "Um item"}" acabou de esgotar.`, {
-            action: "Remova o item ou escolha outro tamanho para continuar.",
-          });
-        }
-      }
+    }
+
+    // Reserve stock inside the same transaction, as rows WITH A DEADLINE.
+    //
+    // The previous version incremented ProductVariant.stockReserved with no
+    // matching release, so an order that was never paid held its units forever —
+    // the exact way a catalogue gets emptied by a script for free. Now every
+    // hold is a StockReservation row that expires, and a job returns whatever
+    // lapsed (see domain/stock.ts).
+    const reservationRequests = resolved
+      .filter((line): line is typeof line & { variantId: string } => Boolean(line.variantId))
+      .map((line) => ({ variantId: line.variantId, quantity: line.quantity }));
+
+    if (reservationRequests.length > 0) {
+      await reserveStock({
+        tx,
+        orderId: created.id,
+        requests: reservationRequests,
+        expiresAt: reservationExpiresAt,
+      });
     }
 
     if (couponId) {

@@ -12,6 +12,8 @@
  * the matcher to have something to match against in a local environment.
  */
 import { PrismaClient } from "@prisma/client";
+import { buildSearchText } from "../src/server/domain/search-text";
+import { isStyleId } from "../src/server/domain/styles";
 import { scrypt as scryptCb, randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 
@@ -151,6 +153,8 @@ async function main() {
       complexity: 4,
       collection: "linha-kaiju",
       tags: [["STYLE", "streetwear"], ["MOTIF", "mecha"], ["PALETTE", "dark"], ["FIT", "oversized"], ["FABRIC", "embroidered"]],
+      // O primeiro é o estilo principal: é ele que rege a listagem por estilo.
+      styles: ["streetwear-masc", "oversized", "anime-dark"],
       productionDaysMin: 18,
       productionDaysMax: 28,
     },
@@ -166,6 +170,8 @@ async function main() {
       complexity: 3,
       collection: "neo-tradicional",
       tags: [["STYLE", "neo_traditional"], ["MOTIF", "wafuku"], ["PALETTE", "dark"], ["FIT", "relaxed"], ["FABRIC", "technical"]],
+      // O primeiro é o estilo principal: é ele que rege a listagem por estilo.
+      styles: ["japanese-street", "japanese-fashion", "techwear"],
       productionDaysMin: 14,
       productionDaysMax: 22,
     },
@@ -182,6 +188,8 @@ async function main() {
       collection: "oficina",
       fulfilment: "STOCKED",
       tags: [["STYLE", "minimal"], ["PALETTE", "dark"], ["FIT", "relaxed"]],
+      // O primeiro é o estilo principal: é ele que rege a listagem por estilo.
+      styles: ["minimalista-masc", "casual-masc", "normcore"],
       productionDaysMin: 2,
       productionDaysMax: 4,
     },
@@ -197,6 +205,8 @@ async function main() {
       complexity: 3,
       collection: "oficina",
       tags: [["STYLE", "techwear"], ["FIT", "utility"], ["PALETTE", "dark"], ["FABRIC", "cotton"]],
+      // O primeiro é o estilo principal: é ele que rege a listagem por estilo.
+      styles: ["techwear", "workwear", "streetwear-masc"],
       productionDaysMin: 12,
       productionDaysMax: 20,
     },
@@ -212,6 +222,8 @@ async function main() {
       complexity: 3,
       collection: "linha-kaiju",
       tags: [["STYLE", "streetwear"], ["MOTIF", "kawaii"], ["PALETTE", "pastel"], ["FIT", "oversized"], ["FABRIC", "embroidered"]],
+      // O primeiro é o estilo principal: é ele que rege a listagem por estilo.
+      styles: ["kawaii-universo", "oversized", "soft-girl"],
       productionDaysMin: 14,
       productionDaysMax: 22,
     },
@@ -227,6 +239,8 @@ async function main() {
       complexity: 4,
       collection: "neo-tradicional",
       tags: [["STYLE", "cyber"], ["MOTIF", "wafuku"], ["PALETTE", "neon"], ["FIT", "relaxed"]],
+      // O primeiro é o estilo principal: é ele que rege a listagem por estilo.
+      styles: ["cyber-futurista-fem", "japanese-fashion", "rave-festival"],
       productionDaysMin: 16,
       productionDaysMax: 26,
     },
@@ -261,6 +275,32 @@ async function main() {
         update: {},
       });
     }
+
+    // Estilos do catálogo fechado. Um id inválido aqui viraria uma peça
+    // invisível na navegação por estilo, então falha alto em vez de gravar.
+    for (const [position, styleId] of p.styles.entries()) {
+      if (!isStyleId(styleId)) throw new Error(`Seed: estilo desconhecido "${styleId}" em ${p.slug}`);
+      await db.productStyle.upsert({
+        where: { productId_styleId: { productId: product.id, styleId } },
+        create: { productId: product.id, styleId, isPrimary: position === 0, position },
+        update: { isPrimary: position === 0, position },
+      });
+    }
+
+    // O índice de busca é reescrito pela MESMA fórmula do runtime.
+    await db.product.update({
+      where: { id: product.id },
+      data: {
+        searchText: buildSearchText({
+          name: p.name,
+          subtitle: p.subtitle,
+          description: p.description,
+          garmentType: p.garmentType,
+          category: p.category,
+          styleIds: p.styles,
+        }),
+      },
+    });
 
     // Accessories ship one-size; garments carry the full grade.
     const sizes: string[] =

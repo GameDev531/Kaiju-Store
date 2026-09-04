@@ -375,9 +375,20 @@ model Product {
   // Denormalised counters — recomputed by jobs, never trusted from the client.
   ratingSum         Int           @default(0)
   ratingCount       Int           @default(0)
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  deletedAt         DateTime?
+
+  /// Lowercased, accent-stripped haystack: name + subtitle + description +
+  /// garment type + every style label, alias and description attached to this
+  /// product. Rebuilt whenever any of those change, by exactly one function, so
+  /// query and index can never normalise differently.
+  ///
+  /// Deliberately a LIKE-scannable column rather than SQLite FTS5 or a Postgres
+  /// tsvector: it behaves identically on both engines and stays correct while
+  /// the catalogue is small. The upgrade path is documented in ARQUITETURA.md.
+  searchText String @default("")
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 
   variants     ProductVariant[]
   media        ProductMedia[]
@@ -385,10 +396,32 @@ model Product {
   orderItems   OrderItem[]
   reviews      Review[]
   tags         ProductTag[]
+  styles       ProductStyle[]
   interactions InteractionEvent[]
 
   @@index([published, category])
   @@index([creatorStoreId])
+  @@index([searchText])
+}
+
+/// A product's declared styles, from the catalogue in domain/styles.ts.
+///
+/// Separate from ProductTag because a style is curated editorial data with a
+/// primary/secondary weighting, while a tag is a raw facet. Styles EXPAND into
+/// facets on write; the recommender still scores facets, so nothing downstream
+/// has to know styles exist.
+model ProductStyle {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// Style id from the catalogue. Validated on write, never free text.
+  styleId   String
+  /// The one style that best describes the piece drives the browse listing.
+  isPrimary Boolean @default(false)
+  position  Int     @default(0)
+
+  @@unique([productId, styleId])
+  @@index([styleId])
 }
 
 model ProductTag {
@@ -416,8 +449,9 @@ model ProductVariant {
   stockReserved   Int     @default(0)
   active          Boolean @default(true)
 
-  orderItems OrderItem[]
-  cartItems  CartItem[]
+  orderItems   OrderItem[]
+  cartItems    CartItem[]
+  reservations StockReservation[]
 
   @@index([productId, active])
 }
@@ -460,9 +494,16 @@ model Cart {
   updatedAt   DateTime  @updatedAt
   closedAt    DateTime?
 
+  /// A cart is a scratchpad, not storage. It expires and is swept, so an
+  /// abandoned bag cannot sit against the catalogue indefinitely.
+  /// IMPORTANT: a cart holds NO stock. Reservation happens only at checkout,
+  /// for a short window — see StockReservation.
+  expiresAt DateTime
+
   items CartItem[]
 
   @@index([userId, closedAt])
+  @@index([expiresAt])
 }
 
 model CartItem {
@@ -476,9 +517,14 @@ model CartItem {
   quotationId           String?
   quantity              Int             @default(1)
   // Snapshot only — the server recomputes every price at checkout and ignores this.
+  // Kept solely to show the customer when a price moved while the bag sat open.
   displayUnitPriceCents Int
   createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
 
+  /// One row per (cart, variant) so "add the same thing twice" increments a
+  /// quantity instead of creating a duplicate line — the classic cart bug.
+  @@unique([cartId, productVariantId])
   @@index([cartId])
 }
 
@@ -508,6 +554,34 @@ model Quotation {
   @@index([designId, createdAt])
 }
 
+/// Stock held for an unpaid order, with a deadline.
+///
+/// This exists because of a specific attack: create orders, never pay, and the
+/// stock stays locked forever. Incrementing ProductVariant.stockReserved with no
+/// matching release is how a catalogue gets emptied by a script for free.
+///
+/// Every hold is a row with an expiry. A job releases what lapsed and cancels
+/// the order behind it. Release is idempotent — it is guarded on status HELD, so
+/// running the sweep twice cannot decrement the same units twice.
+model StockReservation {
+  id               String         @id @default(cuid())
+  productVariantId String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  orderId          String
+  order            Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  quantity         Int
+  /// HELD while payment is pending · CONSUMED once paid · RELEASED when it lapsed
+  status           String         @default("HELD")
+  expiresAt        DateTime
+  releasedAt       DateTime?
+  releaseReason    String?
+  createdAt        DateTime       @default(now())
+
+  @@unique([orderId, productVariantId])
+  @@index([status, expiresAt])
+  @@index([productVariantId, status])
+}
+
 model Order {
   id        String @id @default(cuid())
   // Human-facing reference, unguessable enough to not be enumerable.
@@ -532,12 +606,18 @@ model Order {
   shippingAddressId String?
   shippingAddress   Address? @relation(fields: [shippingAddressId], references: [id])
 
-  placedAt     DateTime?
-  cancelledAt  DateTime?
-  cancelReason String?
-  holdReason   String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  placedAt DateTime?
+
+  /// Quando o estoque preso para este pedido deixa de ser preso. Definido no
+
+  /// checkout, zerado quando o pagamento é confirmado.
+
+  reservationExpiresAt DateTime?
+  cancelledAt          DateTime?
+  cancelReason         String?
+  holdReason           String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   items        OrderItem[]
   payments     Payment[]
@@ -549,6 +629,7 @@ model Order {
   rewardGrants RewardGrant[]
   messages     MessageThread[]
   reviews      Review[]
+  reservations StockReservation[]
 
   @@index([userId, status])
   @@index([status, createdAt])

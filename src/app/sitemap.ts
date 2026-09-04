@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { db } from "@/server/db";
 import { SITE } from "@/lib/site";
+import { STYLES } from "@/server/domain/styles";
 
 export const revalidate = 3600;
 
@@ -9,6 +10,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: "", priority: 1.0, changeFrequency: "daily" as const },
     { path: "/loja", priority: 0.9, changeFrequency: "daily" as const },
     { path: "/colecoes", priority: 0.8, changeFrequency: "weekly" as const },
+    { path: "/estilos", priority: 0.8, changeFrequency: "weekly" as const },
     { path: "/criar", priority: 0.9, changeFrequency: "monthly" as const },
     { path: "/como-funciona", priority: 0.8, changeFrequency: "monthly" as const },
     { path: "/faq", priority: 0.7, changeFrequency: "monthly" as const },
@@ -52,6 +54,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: c.updatedAt,
       changeFrequency: "weekly" as const,
       priority: 0.7,
+    })),
+    // O catálogo de estilos é conteúdo estável e é por onde a maior parte da
+    // busca externa entra ("techwear feminino", "dark academia roupas").
+    ...STYLES.map((style) => ({
+      url: `${SITE.url}/estilos/${style.id}`,
+      lastModified: new Date(),
+      changeFrequency: "weekly" as const,
+      priority: 0.6,
     })),
   ];
 }

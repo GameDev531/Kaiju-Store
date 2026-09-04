@@ -294,7 +294,12 @@ export const LOCATION_MODE_LABELS: Record<LocationMode, string> = {
 
 // ----------------------------------------------------- recommender facets ---
 
-export const FACET_KINDS = tuple(["STYLE", "MOTIF", "PALETTE", "FIT", "FABRIC", "FANDOM_GENRE"]);
+export const FACET_KINDS = tuple([
+  "STYLE", "MOTIF", "PALETTE", "FIT", "FABRIC", "FANDOM_GENRE",
+  // Added with the style catalogue: how dressed-up a piece is, and which era it
+  // references. Both are things people search on and neither fits the others.
+  "FORMALITY", "ERA", "STYLE_ID",
+]);
 export type FacetKind = (typeof FACET_KINDS)[number];
 
 export const INTERACTION_KINDS = tuple(["VIEW", "SEARCH", "ADD_TO_CART", "PURCHASE", "SAVE", "CUSTOMIZE", "DWELL"]);

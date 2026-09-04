@@ -7,6 +7,9 @@ import { getOrderForCustomer, orderTimeline } from "@/server/domain/orders";
 import { TRACKER_SPINE, trackerPosition } from "@/server/domain/order-state";
 import { signFileUrl } from "@/server/storage";
 import { Breadcrumbs, Label, Badge, Notice, MoneyText, SectionHead, MediaFrame } from "@/components/ui";
+import { DeliverButton } from "@/components/ui/deliver-button";
+import { confirmDeliveryAction } from "../actions";
+import { csrfToken } from "@/server/auth/session";
 import {
   ORDER_STATUS_LABELS, SHIPMENT_STATUS_LABELS, STAGE_LABELS, VERIFICATION_META,
   type OrderStatus, type ShipmentStatus, type ProductionStageName, type VerificationLevel,
@@ -28,6 +31,7 @@ export default async function OrderPage({ params }: { params: Promise<{ referenc
 
   const order = await getOrderForCustomer(found.id, auth.user.id);
   const timeline = await orderTimeline(order.id);
+  const csrfConfirm = await csrfToken("order.confirm_delivery");
   const status = order.status as OrderStatus;
   const statusMeta = ORDER_STATUS_LABELS[status];
   const position = trackerPosition(status);
@@ -242,9 +246,30 @@ export default async function OrderPage({ params }: { params: Promise<{ referenc
           ) : null}
 
           {status === "DELIVERED" ? (
+            <div className="panel corner-ticks" style={{ marginTop: "1.25rem", padding: "1.5rem" }}>
+              <Label>Sua peça chegou</Label>
+              <p className="t-title" style={{ marginTop: "0.5rem" }}>Está tudo certo?</p>
+              <p style={{ color: "var(--color-ink-soft)", marginTop: "0.6rem", fontSize: "0.9rem", lineHeight: 1.6 }}>
+                Vista, meça, olhe as costuras. Se estiver como você aprovou, confirme o recebimento —
+                é o que fecha o pedido e libera o pagamento do ateliê que costurou.
+              </p>
+              <div style={{ marginTop: "1.25rem" }}>
+                <DeliverButton
+                  action={confirmDeliveryAction}
+                  csrf={csrfConfirm}
+                  orderId={order.id}
+                  idleLabel="Confirmar recebimento"
+                  doneLabel="Recebido"
+                  hint="Confirmar não encerra seus direitos: a política de trocas continua valendo pelos 7 dias. Se você não clicar, o pedido fecha sozinho no fim do prazo."
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {status === "DELIVERED" ? (
             <div style={{ marginTop: "1.25rem" }}>
-              <Notice tone="attention" title="Confira a peça em até 7 dias">
-                Meça e vista. Se algo divergir da ficha que você aprovou — medida fora da tolerância,
+              <Notice tone="attention" title="Encontrou algum problema?">
+                Se algo divergir da ficha que você aprovou — medida fora da tolerância,
                 material trocado, detalhe faltando —{" "}
                 <Link href={`/contato?assunto=problema-${order.reference}`} className="link">
                   abra um chamado
@@ -252,6 +277,16 @@ export default async function OrderPage({ params }: { params: Promise<{ referenc
                 dentro deste prazo, com fotos e o número deste pedido. A{" "}
                 <Link href="/politicas/trocas" className="link">Política de trocas</Link> explica quem
                 arca com o quê em cada caso.
+              </Notice>
+            </div>
+          ) : null}
+
+          {status === "COMPLETED" ? (
+            <div style={{ marginTop: "1.25rem" }}>
+              <Notice tone="good" title="Pedido concluído">
+                Obrigado. O ateliê que costurou esta peça foi notificado e entra no próximo
+                fechamento de repasse.{" "}
+                <Link href="/loja" className="link">Ver o que há de novo no ateliê</Link>
               </Notice>
             </div>
           ) : null}

@@ -4,6 +4,7 @@ import { AppError } from "../lib/errors";
 import { log, securityEvent } from "../lib/logger";
 import { sha256 } from "../lib/crypto";
 import { transitionOrder } from "../domain/orders";
+import { consumeReservations, releaseReservations } from "../domain/stock";
 import { recordAudit } from "../domain/audit";
 import { enqueue } from "../jobs/queue";
 import type { PaymentProvider } from "./provider";
@@ -159,6 +160,10 @@ async function applyPaymentEvent(
           instrumentLast4: typeof data.last4 === "string" ? data.last4.slice(-4) : null,
         },
       });
+      // Money is in: the hold becomes a sale. Stock on hand drops and the
+      // reservation stops holding — both together, or the unit is lost twice.
+      await consumeReservations(payment.orderId);
+
       await transitionOrder({
         orderId: payment.orderId,
         to: "PAID",
@@ -178,6 +183,9 @@ async function applyPaymentEvent(
           failureCode: typeof data.failure_code === "string" ? data.failure_code : "unknown",
         },
       });
+      // The order goes back for another attempt, so the hold stays — but only
+      // until its existing deadline. A failed payment does not extend the window;
+      // that would let repeated failures hold stock indefinitely.
       await transitionOrder({
         orderId: payment.orderId,
         to: "CUSTOMER_APPROVED",
@@ -198,6 +206,19 @@ async function applyPaymentEvent(
         actor: "PROVIDER_WEBHOOK",
         reason: "Chargeback aberto pelo emissor.",
       });
+      break;
+    }
+
+    case "payment.cancelled":
+    case "payment.expired": {
+      await db.payment.update({ where: { id: payment.id }, data: { status: "CANCELLED" } });
+      await releaseReservations(payment.orderId, "Pagamento cancelado ou expirado no provedor.");
+      await transitionOrder({
+        orderId: payment.orderId,
+        to: "CANCELLED",
+        actor: "PROVIDER_WEBHOOK",
+        reason: "O pagamento foi cancelado. As peças voltaram para o catálogo.",
+      }).catch(() => undefined);
       break;
     }
 

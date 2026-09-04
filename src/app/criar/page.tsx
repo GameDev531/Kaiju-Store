@@ -6,6 +6,7 @@ import { getAuth, csrfToken } from "@/server/auth/session";
 import { CreateDesignForm } from "@/components/design/forms";
 import { createDesignAction } from "./actions";
 import { Breadcrumbs, Label, Notice, SectionHead, EmptyState } from "@/components/ui";
+import { getStyle } from "@/server/domain/styles";
 import { SITE } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -17,10 +18,21 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default async function CreatePage() {
+export default async function CreatePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ estilo?: string }>;
+}) {
   const auth = await getAuth();
+  // Chegou de uma página de estilo: o campo já vem começado, e continua editável.
+  const style = getStyle((await searchParams).estilo ?? "");
+  const prefillBrief = style
+    ? `Quero uma peça no estilo ${style.label}. ${style.description}\n\n`
+    : undefined;
 
   if (!auth) {
+    // Preserva a intenção original através do login, em vez de descartá-la.
+    const next = encodeURIComponent(style ? `/criar?estilo=${style.id}` : "/criar");
     return (
       <div className="wrap-narrow section">
         <Breadcrumbs trail={[{ href: "/", label: "Início" }, { label: "Criar minha peça" }]} />
@@ -30,8 +42,8 @@ export default async function CreatePage() {
           fichas ficam guardadas nela, e só você tem acesso.
         </p>
         <div style={{ display: "flex", gap: "0.85rem", marginTop: "1.75rem", flexWrap: "wrap" }}>
-          <Link href="/cadastrar?next=/criar" className="btn btn-primary">Criar conta</Link>
-          <Link href="/entrar?next=/criar" className="btn btn-outline">Já tenho conta</Link>
+          <Link href={`/cadastrar?next=${next}`} className="btn btn-primary">Criar conta</Link>
+          <Link href={`/entrar?next=${next}`} className="btn btn-outline">Já tenho conta</Link>
         </div>
         <div style={{ marginTop: "2.5rem" }}>
           <Notice tone="info" title="Antes de decidir">
@@ -67,7 +79,7 @@ export default async function CreatePage() {
           </p>
 
           <div style={{ marginTop: "2rem" }}>
-            <CreateDesignForm action={createDesignAction} csrf={csrf} />
+            <CreateDesignForm action={createDesignAction} csrf={csrf} prefillBrief={prefillBrief} />
           </div>
 
           <div style={{ marginTop: "2.5rem" }}>

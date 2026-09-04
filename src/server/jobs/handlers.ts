@@ -7,6 +7,8 @@ import { dispatchOrderToProducers } from "../domain/production";
 import { rebuildTasteProfile } from "../domain/recommender";
 import { evaluateActiveCampaignsForUser, revokeGrantsForOrder } from "../domain/rewards";
 import { pruneRateLimitBuckets } from "../lib/ratelimit";
+import { releaseExpiredReservations, detectReservationAbuse } from "../domain/stock";
+import { sweepExpiredCarts } from "../domain/cart";
 import { findProducers } from "../domain/matching";
 import { parseSpecJson } from "../domain/spec";
 import type { JobRole } from "../domain/enums";
@@ -278,6 +280,33 @@ const retentionSweep: Handler = async () => {
   log.info("retention.sweep_complete", { deleted, pruned, expiredOffers, sessions, tokens });
 };
 
+/**
+ * Returns stock held by orders that were never paid, and cancels them.
+ *
+ * This is the job the whole reservation design depends on. Without it, every
+ * abandoned checkout is a permanent hole in the catalogue — which is exactly
+ * the attack the reservation rows exist to close.
+ *
+ * It also sweeps expired carts (hygiene, not stock — carts hold nothing) and
+ * flags accounts that abandon checkouts in bulk, so the operation can act on
+ * the cause rather than only mopping up the symptom.
+ */
+const stockSweep: Handler = async () => {
+  const released = await releaseExpiredReservations(200);
+  const carts = await sweepExpiredCarts(500);
+  const flagged = await detectReservationAbuse(24, 5);
+
+  if (released.reservationsReleased > 0 || carts > 0 || flagged > 0) {
+    log.info("stock.sweep_complete", {
+      ordersCancelled: released.ordersCancelled,
+      reservationsReleased: released.reservationsReleased,
+      unitsReturned: released.unitsReturned,
+      cartsSwept: carts,
+      accountsFlagged: flagged,
+    });
+  }
+};
+
 const shippingSync: Handler = async () => {
   // Placeholder for carrier polling where a carrier has no webhook. Left as a
   // no-op rather than a simulation that would invent shipment events.
@@ -303,6 +332,7 @@ const HANDLERS: Record<QueueName, Handler> = {
   reward_evaluation: rewardEvaluation,
   taste_profile: tasteProfile,
   retention_sweep: retentionSweep,
+  stock_sweep: stockSweep,
   shipping_sync: shippingSync,
   payout_rollup: payoutRollup,
   ai_analysis: aiAnalysis,

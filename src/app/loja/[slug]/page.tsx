@@ -2,10 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/server/db";
-import { getAuth, getOrCreateAnonId } from "@/server/auth/session";
+import { getAuth, getOrCreateAnonId, csrfToken } from "@/server/auth/session";
 import { recordInteraction, similarTo } from "@/server/domain/recommender";
 import { Breadcrumbs, MediaFrame, MoneyText, Badge, Notice, SectionHead, Label } from "@/components/ui";
 import { CATEGORY_LABELS, RIGHTS_LABELS, type ProductCategory, type MediaKind } from "@/server/domain/enums";
+import { AddToCartForm } from "@/components/cart/forms";
+import { addToCartAction } from "@/app/sacola/actions";
 import { SITE } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +57,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
   const anonId = auth ? null : await getOrCreateAnonId();
   await recordInteraction({ kind: "VIEW", userId: auth?.user.id ?? null, anonId, productId: product.id });
 
+  const cartCsrf = await csrfToken("cart.add");
   const similar = await similarTo(product.id, 4);
   const similarProducts = similar.length
     ? await db.product.findMany({
@@ -179,36 +182,31 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
           ) : null}
 
           <div style={{ marginTop: "1.75rem" }}>
-            <Label>Tamanhos</Label>
-            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.6rem" }}>
-              {product.variants.map((v) => {
-                const available = madeToOrder || v.stockOnHand - v.stockReserved > 0;
-                return (
-                  <span
-                    key={v.id}
-                    className="badge"
-                    style={{
-                      minWidth: 48,
-                      justifyContent: "center",
-                      opacity: available ? 1 : 0.4,
-                      textDecoration: available ? "none" : "line-through",
-                    }}
-                  >
-                    {v.size}
-                  </span>
-                );
-              })}
-            </div>
-            <p style={{ fontSize: "0.8125rem", color: "var(--color-ink-faint)", marginTop: "0.6rem" }}>
-              Nenhum tamanho serve exatamente? Toda peça deste catálogo pode ser feita nas suas medidas.
+            <AddToCartForm
+              action={addToCartAction}
+              csrf={cartCsrf}
+              productId={product.id}
+              madeToOrder={madeToOrder}
+              variants={product.variants.map((v) => ({
+                id: v.id,
+                size: v.size,
+                colorway: v.colorway,
+                // Disponibilidade lida agora. A sacola não vai segurar nada disto.
+                available: Math.max(0, v.stockOnHand - v.stockReserved),
+              }))}
+            />
+            <p style={{ fontSize: "0.8125rem", color: "var(--color-ink-faint)", marginTop: "0.75rem" }}>
+              A sacola não reserva estoque. As unidades só ficam separadas para você durante o
+              pagamento, e por uma janela curta — é o que impede alguém de esvaziar o catálogo
+              sem comprar nada.
             </p>
           </div>
 
-          <div style={{ display: "grid", gap: "0.75rem", marginTop: "1.75rem" }}>
-            <Link href={`/criar?base=${product.slug}`} className="btn btn-primary btn-block">
+          <div style={{ display: "grid", gap: "0.75rem", marginTop: "1.5rem" }}>
+            <Link href={`/criar?base=${product.slug}`} className="btn btn-outline btn-block">
               Personalizar nas minhas medidas
             </Link>
-            <Link href="/como-funciona" className="btn btn-outline btn-block">
+            <Link href="/como-funciona" className="btn btn-quiet btn-block">
               Como a produção funciona
             </Link>
           </div>

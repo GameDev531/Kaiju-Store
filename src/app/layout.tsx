@@ -3,6 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 import { SITE, NAV_PRIMARY, NAV_FOOTER } from "@/lib/site";
 import { getAuth } from "@/server/auth/session";
+import { peekCartCount } from "@/server/domain/cart";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE.url),
@@ -38,6 +39,8 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const auth = await getAuth();
+  // Só olha. Abrir uma página não cria sacola nem grava cookie.
+  const cartCount = await peekCartCount(auth?.user.id ?? null);
 
   const organizationLd = {
     "@context": "https://schema.org",
@@ -115,6 +118,20 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               ) : (
                 <Link href="/entrar" className="btn btn-quiet btn-sm">Entrar</Link>
               )}
+              <Link
+                href="/sacola"
+                className="btn btn-quiet btn-sm"
+                aria-label={
+                  cartCount === 0
+                    ? "Sacola, vazia"
+                    : `Sacola, ${cartCount} ${cartCount === 1 ? "item" : "itens"}`
+                }
+              >
+                Sacola
+                {cartCount > 0 ? (
+                  <span className="cart-count" aria-hidden="true">{cartCount > 99 ? "99+" : cartCount}</span>
+                ) : null}
+              </Link>
               <Link href="/criar" className="btn btn-primary btn-sm">Criar minha peça</Link>
             </div>
           </div>

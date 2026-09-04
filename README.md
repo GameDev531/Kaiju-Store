@@ -83,7 +83,7 @@ Senha para todas: `kaiju-desenvolvimento-2026`
 npm test
 ```
 
-194 testes, com foco no que **quebra dinheiro, privacidade ou confiança**:
+284 testes, com foco no que **quebra dinheiro, privacidade ou confiança**:
 
 | Arquivo | Cobre |
 |---|---|
@@ -95,9 +95,14 @@ npm test
 | `webhook-security` | Corpo adulterado com assinatura válida, janela de replay, reuso entre integrações |
 | `pricing-recommender` | Determinismo do orçamento, mapeamento de busca para facetas |
 | `integration` | Isolamento entre clientes e ateliês, corridas, idempotência, farm de recompensa |
+| `stock-cart` | Reserva sempre volta, liberar duas vezes não cria estoque, a sacola não segura nada |
+| `styles-search` | Integridade do catálogo de estilos, sinônimo nas duas línguas, acento e plural |
+| `middleware` | Pré-filtro de borda que não é a fronteira de segurança |
 
-Três defeitos reais foram encontrados por esses testes e corrigidos, não
-contornados — estão no histórico de commits.
+Vários defeitos reais foram encontrados por esses testes e corrigidos, não
+contornados — estão no histórico de commits. Entre eles: uma busca que
+reconhecia o estilo na frase e devolvia zero resultado, e um checkout que
+incrementava `stockReserved` sem nenhum caminho de devolução.
 
 ---
 
@@ -133,6 +138,19 @@ claramente marcada como leitura reduzida.
 **Nenhum dado social fictício.** Sem avaliação falsa, sem contador de clientes,
 sem selo inventado. Onde não há avaliação, a interface diz que não há e explica
 por quê. `aggregateRating` no schema.org só é emitido com avaliação real.
+
+**A sacola não reserva estoque.** Nem por um segundo. Reservar no "adicionar à
+sacola" parece atencioso e é a via barata para esvaziar um catálogo de graça.
+A reserva acontece só no checkout, com prazo ligado à forma de pagamento
+(PIX 30 min, cartão 60 min, boleto 3 dias), e uma varredura a cada 2 minutos
+devolve o que não foi pago. A liberação é idempotente porque a fila entrega
+ao-menos-uma-vez e decrementar duas vezes criaria estoque do nada.
+
+**A busca entende como as pessoas escrevem.** 86 estilos com sinônimo, gíria,
+mistura de português e inglês. Consulta e índice passam pela mesma função de
+normalização — duas normalizações parecidas é um bug invisível até alguém
+reclamar. Estilo reconhecido na frase **amplia** o resultado; filtro explícito
+de estilo **restringe**. O gosto do cliente enviesa o ranking, nunca decide.
 
 **Sem webfont de terceiro.** A CSP não abre para CDN externo, e a marca não
 entrega o IP de cada visitante por causa de uma fonte.

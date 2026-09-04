@@ -57,7 +57,16 @@ function fieldError(state: ActionState, name: string): string | undefined {
 
 // ------------------------------------------------------------ create form ---
 
-export function CreateDesignForm({ action, csrf }: { action: ServerAction; csrf: string }) {
+export function CreateDesignForm({
+  action,
+  csrf,
+  prefillBrief,
+}: {
+  action: ServerAction;
+  csrf: string;
+  /** Texto inicial vindo de uma página de estilo. É só um ponto de partida editável. */
+  prefillBrief?: string | undefined;
+}) {
   const [state, formAction, pending] = useActionState(action, INITIAL);
 
   return (
@@ -96,6 +105,7 @@ export function CreateDesignForm({ action, csrf }: { action: ServerAction; csrf:
           maxLength={4000}
           rows={7}
           disabled={pending}
+          defaultValue={prefillBrief ?? ""}
           placeholder="Quero uma jaqueta bomber preta, bem oversized, em sarja pesada. Manga raglan, gola de ribana, zíper na frente e dois bolsos embutidos. Bordado pequeno no peito esquerdo."
         />
       </Field>

@@ -26,6 +26,7 @@ export type QueueName =
   | "reward_evaluation"
   | "taste_profile"
   | "retention_sweep"
+  | "stock_sweep"
   | "payout_rollup";
 
 export interface EnqueueOptions {

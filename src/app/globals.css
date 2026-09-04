@@ -306,6 +306,21 @@ button { font: inherit; color: inherit; }
 .btn-quiet:hover:not(:disabled) { border-color: var(--color-ink); color: var(--color-ink); }
 
 .btn-sm { padding: 0.5rem 0.95rem; min-height: 38px; font-size: 0.8125rem; }
+
+/* Contador da sacola. Quadrado como o resto do sistema — nada de pílula. */
+.cart-count {
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0 0.32rem;
+  min-width: 1.15rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.45;
+  text-align: center;
+  color: var(--color-paper);
+  background: var(--color-shu);
+  font-variant-numeric: tabular-nums;
+}
 .btn-block { width: 100%; }
 
 /* Link com sublinhado que cresce — sem depender de hover para ser legível. */
@@ -633,3 +648,277 @@ button { font: inherit; color: inherit; }
 .stack > * + * { margin-top: var(--stack-gap, 1rem); }
 .hairline-top { border-top: 1px solid var(--color-rule); }
 .hairline-bottom { border-bottom: 1px solid var(--color-rule); }
+
+/* ==========================================================================
+   BOTÃO DE ENTREGA — a animação de confirmação
+   --------------------------------------------------------------------------
+   Reconstruído sobre a ideia do caminhão, no vocabulário KAIJU:
+
+   · Cantos retos. Uma cápsula arredondada não pertence a este sistema.
+   · Tinta e papel, não azul genérico. O vermelhão só aparece na confirmação —
+     o momento em que há uma decisão tomada.
+   · A caixa carrega a marca do carimbo (▲), não um retângulo bege qualquer.
+   · Linhas de velocidade viram a trama do papel de modelagem em movimento.
+   · 10 segundos era tempo demais para uma confirmação. Aqui são 3,2s: rápido o
+     bastante para não irritar, longo o bastante para registrar.
+   · Sem `prefers-reduced-motion`, a troca de estado acontece instantaneamente —
+     o estado final é o mesmo, só sem o trajeto.
+   ========================================================================== */
+
+.deliver-btn {
+  appearance: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding-inline: 2rem;
+  border: 1px solid var(--color-ink);
+  border-radius: var(--radius-seam);
+  background: var(--color-ink);
+  color: var(--color-paper);
+  font: inherit;
+  font-weight: 650;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  overflow: hidden;
+  isolation: isolate;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 90ms ease;
+}
+.deliver-btn:hover:not(:disabled):not([data-state="running"]) {
+  background: var(--color-ink-soft);
+  border-color: var(--color-ink-soft);
+}
+.deliver-btn:active:not(:disabled) { transform: translateY(1px); }
+.deliver-btn:disabled { cursor: not-allowed; }
+.deliver-btn:focus-visible { outline: 2px solid var(--color-shu); outline-offset: 3px; }
+
+/* Marca de canto do molde, como no resto do sistema. */
+.deliver-btn::before,
+.deliver-btn::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-color: var(--color-shu);
+  border-style: solid;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+  z-index: 4;
+}
+.deliver-btn::before { top: 3px; left: 3px; border-width: 2px 0 0 2px; }
+.deliver-btn::after { bottom: 3px; right: 3px; border-width: 0 2px 2px 0; }
+.deliver-btn[data-state="done"]::before,
+.deliver-btn[data-state="done"]::after { opacity: 1; }
+
+/* --- rótulos: um por estado, empilhados no mesmo lugar ------------------- */
+.deliver-btn__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+  transition: opacity 240ms ease, transform 240ms ease;
+  z-index: 3;
+}
+.deliver-btn__label--idle { opacity: 1; }
+.deliver-btn__label--done {
+  position: absolute;
+  opacity: 0;
+  transform: translateY(6px);
+  color: var(--color-paper);
+}
+.deliver-btn[data-state="running"] .deliver-btn__label--idle { opacity: 0; transform: translateY(-6px); }
+.deliver-btn[data-state="done"] .deliver-btn__label--idle { opacity: 0; transform: translateY(-6px); }
+.deliver-btn[data-state="done"] .deliver-btn__label--done {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 2.5s;
+}
+
+.deliver-btn__check {
+  width: 13px;
+  height: 11px;
+  fill: none;
+  stroke: var(--color-shu);
+  stroke-width: 2.4;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  stroke-dasharray: 18;
+  stroke-dashoffset: 18;
+}
+.deliver-btn[data-state="done"] .deliver-btn__check {
+  animation: deliver-check 320ms ease forwards 2.7s;
+}
+
+/* --- a trama do papel correndo ------------------------------------------- */
+.deliver-btn__rails {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  z-index: 1;
+  background-image: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-paper) 26%, transparent) 0 1px,
+    transparent 1px 14px
+  );
+  pointer-events: none;
+}
+.deliver-btn[data-state="running"] .deliver-btn__rails { animation: deliver-rails 3200ms ease forwards; }
+
+/* --- o caixote, com o carimbo da casa ------------------------------------ */
+.deliver-btn__box {
+  position: absolute;
+  top: 50%;
+  left: -26px;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  display: grid;
+  place-items: center;
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule-strong);
+  border-radius: 1px;
+  opacity: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.deliver-btn__box span {
+  color: var(--color-shu);
+  font-size: 9px;
+  line-height: 1;
+}
+.deliver-btn[data-state="running"] .deliver-btn__box { animation: deliver-box 3200ms ease forwards; }
+
+/* --- o veículo ----------------------------------------------------------- */
+.deliver-btn__truck {
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 54px;
+  height: 30px;
+  margin-top: -15px;
+  transform: translateX(20px);
+  z-index: 2;
+  pointer-events: none;
+}
+.deliver-btn[data-state="running"] .deliver-btn__truck { animation: deliver-truck 3200ms ease forwards; }
+
+.deliver-btn__cargo {
+  position: absolute;
+  inset: 0 18px 0 0;
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule-strong);
+  border-radius: 1px;
+}
+/* As portas do baú, que abrem para receber a caixa. */
+.deliver-btn__cargo::before,
+.deliver-btn__cargo::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--color-rule-strong);
+  transform-origin: 0 50%;
+}
+.deliver-btn__cargo::before { top: 4px; }
+.deliver-btn__cargo::after { bottom: 4px; }
+.deliver-btn[data-state="running"] .deliver-btn__cargo::before { animation: deliver-door-top 900ms ease forwards 240ms; }
+.deliver-btn[data-state="running"] .deliver-btn__cargo::after { animation: deliver-door-bottom 900ms ease forwards 380ms; }
+
+.deliver-btn__cab {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  background: var(--color-shu);
+  border-radius: 1px 3px 3px 1px;
+  overflow: hidden;
+}
+.deliver-btn__cab::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 3px;
+  width: 9px;
+  height: 10px;
+  background: color-mix(in srgb, var(--color-paper) 82%, transparent);
+  border-radius: 1px;
+}
+.deliver-btn__beam {
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  width: 5px;
+  height: 3px;
+  margin-top: -1.5px;
+  background: var(--color-shu);
+  opacity: 0;
+}
+.deliver-btn[data-state="running"] .deliver-btn__beam { animation: deliver-beam 3200ms ease forwards; }
+
+@keyframes deliver-truck {
+  0%   { transform: translateX(20px); }
+  22%  { transform: translateX(-88px); }
+  38%  { transform: translateX(-88px); }
+  48%  { transform: translateX(-58px); }
+  72%  { transform: translateX(-132px); }
+  100% { transform: translateX(-320px); }
+}
+@keyframes deliver-box {
+  0%   { opacity: 0; transform: translateX(0) rotate(0deg); }
+  10%  { opacity: 1; transform: translateX(14px) rotate(0deg); }
+  30%  { opacity: 1; transform: translateX(52px) rotate(-6deg); }
+  34%  { opacity: 0; transform: translateX(52px) rotate(-6deg); }
+  100% { opacity: 0; transform: translateX(52px) rotate(-6deg); }
+}
+@keyframes deliver-rails {
+  0%, 20%   { opacity: 0; transform: translateX(0); }
+  30%, 68%  { opacity: 1; }
+  78%       { opacity: 0; }
+  100%      { opacity: 0; transform: translateX(-260px); }
+}
+@keyframes deliver-beam {
+  0%, 24%  { opacity: 0; }
+  34%, 90% { opacity: 0.85; }
+  100%     { opacity: 0; }
+}
+@keyframes deliver-door-top {
+  0%   { transform: rotate(0deg); }
+  40%  { transform: rotate(-26deg); }
+  100% { transform: rotate(0deg); }
+}
+@keyframes deliver-door-bottom {
+  0%   { transform: rotate(0deg); }
+  40%  { transform: rotate(26deg); }
+  100% { transform: rotate(0deg); }
+}
+@keyframes deliver-check {
+  to { stroke-dashoffset: 0; }
+}
+
+/* Estado final: a confirmação fica marcada em vermelhão. */
+.deliver-btn[data-state="done"] {
+  background: var(--color-ink);
+  border-color: var(--color-shu);
+}
+
+/**
+ * Movimento reduzido: sem trajeto, sem caminhão, sem atraso.
+ * O estado final é idêntico — quem desligou animação não recebe uma versão
+ * pior da confirmação, recebe a mesma sem o teatro.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .deliver-btn__truck,
+  .deliver-btn__box,
+  .deliver-btn__rails,
+  .deliver-btn__beam { display: none; }
+  .deliver-btn[data-state="done"] .deliver-btn__label--done { transition-delay: 0s; }
+  .deliver-btn[data-state="done"] .deliver-btn__check {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}

@@ -255,6 +255,89 @@ carrega o motivo.
 
 ---
 
+## 9.1 Busca e catálogo de estilos
+
+`src/server/domain/styles.ts` guarda **86 estilos** em três grupos de
+apresentação (FEMININO, MASCULINO, UNIVERSOS). Grupo é apresentação, não
+identidade: descreve a modelagem em que a peça costuma ser cortada, e qualquer
+pessoa pode pedir qualquer estilo em qualquer modelagem — a interface diz isso
+em voz alta em vez de deixar a navegação virar regra sobre quem veste o quê.
+
+Cada estilo carrega:
+
+| Campo | Para quê |
+|---|---|
+| `aliases` | Como as pessoas realmente escrevem — gíria, mistura PT/EN, erro comum. Sem isso "stealth wealth" e "luxo discreto" não chegam em Quiet Luxury |
+| `facets` | Dimensões que o recomendador pontua (`FIT:`, `PALETTE:`, `FABRIC:`, `MOTIF:`, `FORMALITY:`, `ERA:`, `FANDOM_GENRE:`) |
+| `related` | Vizinhança curada, usada em "costuma andar junto" e nas sugestões de zero-resultado |
+
+**Normalização única.** `normalizeText` (minúscula + remoção de acento por NFD)
+é a MESMA função aplicada à consulta e ao índice. Duas normalizações parecidas
+produzem um bug invisível até alguém reclamar que "não acha nada".
+
+**A fórmula do índice mora sozinha.** `buildSearchText` está em
+`search-text.ts`, sem dependência de banco nem de ambiente, para que o runtime,
+o seed e os testes construam `Product.searchText` pela mesma função.
+`reindexProduct` é a única função que escreve essa coluna.
+
+**Ranking** (`search.ts`): estilo casado vale mais que qualquer casamento
+textual (1000 + 400 se for o estilo principal, contra 700 para nome exato). Um
+filtro `?estilo=` explícito é **restrição**; um estilo apenas reconhecido na
+frase é **alcance + reforço de ranking** — ele entra em `OR` com a exigência de
+todos os tokens no texto, senão a busca reconhece "roupa de rua japonesa",
+anuncia isso na tela e devolve zero resultado. O gosto do cliente enviesa
+(máx. 180 pontos) mas nunca decide: uma peça com score zero não sobe por
+afinidade.
+
+**Zero resultado nunca é beco:** vizinhança curada → prefixo → amostra
+alternando entre os três grupos.
+
+Treze rótulos existem em mais de um grupo ("Kawaii", "Y2K", "Streetwear").
+`styleDisplayLabel` desambigua quando o estilo aparece fora do seu grupo.
+
+*Caminho de evolução:* o índice hoje é `LIKE` sobre uma coluna normalizada, com
+teto de 500 candidatos. Serve o catálogo atual com folga. Quando ele crescer,
+o passo é FTS5 no SQLite ou `tsvector` + GIN no PostgreSQL — a troca é local a
+`searchCatalog`, porque a normalização e a fórmula do índice já estão isoladas.
+
+---
+
+## 9.2 Sacola e reserva de estoque
+
+**A sacola não reserva estoque. Nada. Nem por um segundo.**
+
+Reservar no "adicionar à sacola" parece atencioso e é exatamente a via barata
+para esvaziar um catálogo de graça: um script adiciona todo o estoque e nunca
+compra. Então:
+
+- a disponibilidade na sacola é **lida ao vivo** e mostrada como aviso;
+- a sacola **expira** — 14 dias autenticada, 3 dias anônima — e é varrida;
+- a sacola anônima é **fundida** na da conta no login, em vez de descartada;
+- o contador do cabeçalho usa `peekCartCount`, que só *olha*: abrir a home não
+  cria sacola nem grava cookie.
+
+A reserva real acontece na transação do checkout, em três partes que só
+funcionam juntas:
+
+| Parte | Arquivo | Por que é necessária |
+|---|---|---|
+| Linha de reserva com prazo | `StockReservation` | Dá visibilidade: dá para responder "o que está preso agora e até quando" |
+| Varredura | fila `stock_sweep`, a cada 2 min | É quem de fato devolve. Sem ela, a linha de reserva é só documentação do vazamento |
+| Liberação idempotente | `releaseReservations`, guardada em `status: "HELD"` | A fila entrega ao-menos-uma-vez; decrementar duas vezes **criaria estoque do nada** |
+
+Janelas por forma de pagamento: PIX 30 min, cartão 60 min, boleto 3 dias. A
+varredura roda a cada 2 minutos, bem abaixo da menor janela — uma reserva
+liberada uma hora atrasada é uma hora de catálogo que ninguém pôde comprar.
+
+Corrida tratada: se o pagamento cair entre a leitura e a ação da varredura, a
+reserva é **consumida**, não liberada.
+
+Cancelamento e reembolso chamam `releaseReservations` de dentro de
+`transitionOrder`, centralizado de propósito — para que nenhum caminho de
+cancelamento futuro esqueça e vaze estoque em silêncio.
+
+---
+
 ## 10. Assíncrono
 
 Fila durável no banco. Handlers seguros para rodar duas vezes — a fila garante
@@ -268,6 +351,7 @@ ao-menos-uma-vez, não exatamente-uma-vez.
 | `reward_evaluation` | Elegibilidade de campanha; revoga se o pedido for reembolsado |
 | `taste_profile` | Reconstrói afinidade |
 | `retention_sweep` | Apaga arquivos vencidos, poda buckets, expira ofertas |
+| `stock_sweep` | Devolve reservas vencidas, varre sacolas expiradas, sinaliza abandono em massa |
 
 Worker separado: `npm run worker`.
 

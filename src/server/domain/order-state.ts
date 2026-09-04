@@ -29,12 +29,26 @@ const T = (to: OrderStatus, actors: readonly Actor[], description: string): Tran
   description,
 });
 
-/** Anywhere-to-here escapes available to staff, applied on top of the table. */
+/**
+ * Anywhere-to-here escapes, available from any non-terminal state.
+ *
+ * These are ADDITIVE grants, unioned with the per-state table — a direct rule
+ * that omits an actor must never be read as denying that actor a right the
+ * escape gives them. Getting this backwards once meant a customer could not
+ * dispute a completed order, which is precisely when a latent defect shows up.
+ */
 const ADMIN_ESCAPES: readonly TransitionRule[] = [
   T("ON_HOLD", ["ADMIN"], "Produção pausada pela operação"),
   T("DISPUTED", ["ADMIN", "CUSTOMER"], "Análise aberta sobre o pedido"),
   T("CANCELLED", ["ADMIN"], "Cancelado pela operação"),
 ];
+
+/** Escapes stay open from every state except a truly closed one. */
+function escapesAvailableFrom(from: OrderStatus): readonly TransitionRule[] {
+  // COMPLETED is terminal for production but still disputable.
+  if (TERMINAL_STATUSES.includes(from) && from !== "COMPLETED") return [];
+  return ADMIN_ESCAPES;
+}
 
 const TRANSITIONS: Record<OrderStatus, readonly TransitionRule[]> = {
   DRAFT: [
@@ -152,19 +166,20 @@ function rulesFor(status: OrderStatus): readonly TransitionRule[] {
 
 export function canTransition({ from, to, actor }: TransitionCheck): boolean {
   if (from === to) return false;
+  // Union, not short-circuit: either source of authority is sufficient.
   const direct = rulesFor(from).find((r) => r.to === to);
-  if (direct) return direct.actors.includes(actor);
-  if (TERMINAL_STATUSES.includes(from) && from !== "COMPLETED") return false;
-  const escape = ADMIN_ESCAPES.find((r) => r.to === to);
-  return escape ? escape.actors.includes(actor) : false;
+  if (direct?.actors.includes(actor)) return true;
+  const escape = escapesAvailableFrom(from).find((r) => r.to === to);
+  return escape?.actors.includes(actor) ?? false;
 }
 
 /** Throws AppError("ILLEGAL_STATE_TRANSITION") rather than returning false. */
 export function assertTransition(check: TransitionCheck): TransitionRule {
   if (!canTransition(check)) throw illegalTransition(check.from, check.to);
+  // Prefer the state-specific rule's wording; fall back to the escape's.
   const rule =
-    rulesFor(check.from).find((r) => r.to === check.to) ??
-    ADMIN_ESCAPES.find((r) => r.to === check.to);
+    rulesFor(check.from).find((r) => r.to === check.to && r.actors.includes(check.actor)) ??
+    escapesAvailableFrom(check.from).find((r) => r.to === check.to);
   // canTransition already proved one exists; this narrows the type.
   if (!rule) throw illegalTransition(check.from, check.to);
   return rule;
@@ -172,10 +187,9 @@ export function assertTransition(check: TransitionCheck): TransitionRule {
 
 export function allowedTransitions(from: OrderStatus, actor: Actor): OrderStatus[] {
   const direct = rulesFor(from).filter((r) => r.actors.includes(actor)).map((r) => r.to);
-  const escapes =
-    TERMINAL_STATUSES.includes(from) && from !== "COMPLETED"
-      ? []
-      : ADMIN_ESCAPES.filter((r) => r.actors.includes(actor)).map((r) => r.to);
+  const escapes = escapesAvailableFrom(from)
+    .filter((r) => r.actors.includes(actor))
+    .map((r) => r.to);
   return Array.from(new Set([...direct, ...escapes])).filter((s) => s !== from);
 }
 

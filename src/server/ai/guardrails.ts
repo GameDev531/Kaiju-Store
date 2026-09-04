@@ -97,23 +97,33 @@ const INJECTION_PATTERNS: { re: RegExp; code: GuardrailFinding["code"]; severity
 /**
  * Things we will not have manufactured, regardless of who asks or how it is worded.
  * Deliberately narrow: this is a manufacturing-safety list, not a taste filter.
+ *
+ * A note on the regexes: JavaScript's `\b` is ASCII-only, so an anchor placed
+ * next to an accented character (à, í, é) never matches — "à prova de balas"
+ * silently escaped a `\b[àa] prova de bala\b` pattern. Boundaries here are
+ * therefore anchored on ASCII-only sides, and stems are left open so plurals
+ * and inflections ("balas", "policiais") are still caught.
  */
 const PROHIBITED_PATTERNS: { re: RegExp; detail: string }[] = [
   {
-    re: /\b(colete|vest)\b[^.\n]{0,20}\b(bal[íi]stic|[àa] prova de bala|bulletproof|ballistic)\b/i,
+    re: /(colete|vest|jaqueta|casaco)[^.\n]{0,25}(bal[íi]stic|prova de bala|bulletproof|ballistic|antibala|anti-bala)/i,
     detail: "Equipamento de proteção balística exige certificação e não é produzido aqui.",
   },
   {
-    re: /\b(uniforme|uniform|farda)\b[^.\n]{0,30}\b(pol[íi]cia|policial|police|ex[ée]rcito|army|militar oficial|federal)\b/i,
+    re: /(uniforme|uniform|farda)[^.\n]{0,35}(pol[íi]ci|policia|police|ex[ée]rcito|army|militar oficial|federal|swat|bope)/i,
     detail: "Uniformes de força de segurança real não podem ser reproduzidos.",
   },
   {
-    re: /\b(nazi|nazista|sswaffen|waffen[- ]?ss|kkk|klan)\b/i,
+    re: /(nazi|nazist|suw[ai]stika|su[áa]stica|swastika|waffen[- ]?ss|\bkkk\b|ku klux)/i,
     detail: "Simbologia de ódio não é produzida nesta plataforma.",
   },
   {
-    re: /\b(esconder|hide|conceal|ocultar)\b[^.\n]{0,25}\b(arma|weapon|faca|knife|pistola|gun)\b/i,
+    re: /(esconder|hide|conceal|ocultar|disfar[çc]ar)[^.\n]{0,30}(arma|weapon|faca|knife|pistola|gun|rev[óo]lver)/i,
     detail: "Peças projetadas para ocultar armas não são produzidas.",
+  },
+  {
+    re: /(coldre|holster)[^.\n]{0,25}(oculto|escondido|concealed|interno)/i,
+    detail: "Peças com coldre oculto não são produzidas.",
   },
 ];
 

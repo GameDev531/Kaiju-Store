@@ -109,23 +109,33 @@ export function normalizeQuery(raw: string): string {
  * o cliente costuma pesquisar" actually steer recommendations rather than just
  * filling a log table.
  */
+/**
+ * Maps free-text searches onto the facet vocabulary. This is what makes "o que
+ * o cliente costuma pesquisar" actually steer recommendations rather than just
+ * filling a log table.
+ *
+ * Portuguese adjectives inflect for gender and number, and most garment nouns
+ * here are feminine — "jaqueta preta", "calças escuras". Matching only the
+ * masculine singular ("preto") silently drops the majority of real queries, so
+ * every stem below is written open-ended to catch the inflections.
+ */
 const QUERY_FACETS: { re: RegExp; facets: string[] }[] = [
-  { re: /\b(techwear|tatico|tactical|utility|cargo)\b/, facets: ["STYLE:techwear", "FIT:utility"] },
-  { re: /\b(street|streetwear|urbano|oversized|baggy)\b/, facets: ["STYLE:streetwear", "FIT:oversized"] },
-  { re: /\b(mecha|robo|piloto|gundam|eva)\b/, facets: ["MOTIF:mecha"] },
-  { re: /\b(kimono|haori|yukata|japones|japonesa|wafuku)\b/, facets: ["MOTIF:wafuku", "STYLE:neo_traditional"] },
-  { re: /\b(dark|preto|black|gotic|sombrio)\b/, facets: ["PALETTE:dark"] },
-  { re: /\b(pastel|clarinho|kawaii|fofo|rosa)\b/, facets: ["PALETTE:pastel", "MOTIF:kawaii"] },
-  { re: /\b(cyber|neon|futurista|cyberpunk)\b/, facets: ["STYLE:cyber", "PALETTE:neon"] },
-  { re: /\b(vintage|retro|anos 90|90s|y2k)\b/, facets: ["STYLE:retro"] },
-  { re: /\b(minimal|clean|liso|basico)\b/, facets: ["STYLE:minimal"] },
-  { re: /\b(bordado|embroider)\b/, facets: ["FABRIC:embroidered"] },
-  { re: /\b(moletom|hoodie|casaco|jaqueta)\b/, facets: ["FIT:relaxed"] },
-  { re: /\b(couro|leather|biker)\b/, facets: ["FABRIC:leather", "STYLE:biker"] },
-  { re: /\b(cosplay|fantasia|personagem)\b/, facets: ["FANDOM_GENRE:cosplay"] },
-  { re: /\b(shonen|shounen|luta|batalha)\b/, facets: ["FANDOM_GENRE:shonen"] },
-  { re: /\b(slice of life|cotidiano|escolar)\b/, facets: ["FANDOM_GENRE:slice_of_life"] },
-  { re: /\b(horror|terror|sombra)\b/, facets: ["FANDOM_GENRE:horror", "PALETTE:dark"] },
+  { re: /\b(techwear|tatic[oa]s?|tactical|utility|utilitari[oa]s?|cargo)\b/, facets: ["STYLE:techwear", "FIT:utility"] },
+  { re: /\b(street|streetwear|urban[oa]s?|oversized?|baggy|larg[oa]s?|solt[oa]s?)\b/, facets: ["STYLE:streetwear", "FIT:oversized"] },
+  { re: /\b(mecha|rob[oô]s?|piloto|gundam|eva|mech)\b/, facets: ["MOTIF:mecha"] },
+  { re: /\b(kimono|quimono|haori|yukata|japones|japonesa|japoneses|japonesas|wafuku|oriental)\b/, facets: ["MOTIF:wafuku", "STYLE:neo_traditional"] },
+  { re: /\b(dark|pret[oa]s?|black|escur[oa]s?|gotic[oa]s?|sombri[oa]s?|noir)\b/, facets: ["PALETTE:dark"] },
+  { re: /\b(pastel|pasteis|clarinh[oa]s?|kawaii|fof[oa]s?|ros[ao]s?|candy)\b/, facets: ["PALETTE:pastel", "MOTIF:kawaii"] },
+  { re: /\b(cyber|cyberpunk|neon|futurist[ao]s?|tech)\b/, facets: ["STYLE:cyber", "PALETTE:neon"] },
+  { re: /\b(vintage|retro|anos 90|90s|y2k|noventinha)\b/, facets: ["STYLE:retro"] },
+  { re: /\b(minimal|minimalista|clean|lis[oa]s?|basic[oa]s?|simples)\b/, facets: ["STYLE:minimal"] },
+  { re: /\b(bordad[oa]s?|embroider(y|ed)?)\b/, facets: ["FABRIC:embroidered"] },
+  { re: /\b(moletom|moletons|hoodie|casac[oa]s?|jaquetas?|blus[ao]s?)\b/, facets: ["FIT:relaxed"] },
+  { re: /\b(couro|leather|biker|motoqueir[oa]s?)\b/, facets: ["FABRIC:leather", "STYLE:biker"] },
+  { re: /\b(cosplay|fantasias?|personagens?|character)\b/, facets: ["FANDOM_GENRE:cosplay"] },
+  { re: /\b(shonen|shounen|lutas?|batalhas?|shoujo|shojo)\b/, facets: ["FANDOM_GENRE:shonen"] },
+  { re: /\b(slice of life|cotidiano|escolar|colegial)\b/, facets: ["FANDOM_GENRE:slice_of_life"] },
+  { re: /\b(horror|terror|sombras?|creepy|macabr[oa]s?)\b/, facets: ["FANDOM_GENRE:horror", "PALETTE:dark"] },
 ];
 
 export function facetsFromQuery(query: string): string[] {

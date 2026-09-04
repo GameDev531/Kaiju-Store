@@ -14,6 +14,8 @@ next-env.d.ts.timestamp
 # Local database + uploaded objects (private object storage stand-in)
 prisma/*.db
 prisma/*.db-journal
+prisma/vitest.db*
+prisma/test.db*
 prisma/migrations/dev.db*
 /var/
 /storage/

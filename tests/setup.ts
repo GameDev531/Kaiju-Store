@@ -5,7 +5,9 @@
  * identically on a laptop and in CI, and a developer's local configuration can
  * never make a test pass that would fail elsewhere.
  */
-process.env.NODE_ENV = "test";
+// NODE_ENV is typed read-only by @types/node; the assignment is legitimate here
+// because vitest runs this before any application module is imported.
+Object.assign(process.env, { NODE_ENV: "test" });
 process.env.APP_ENV = "test";
 // One database for the whole suite, prepared by tests/global-setup.ts. Set here
 // (not with ??=) so a developer's shell DATABASE_URL can never point the tests
